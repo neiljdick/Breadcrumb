@@ -12,6 +12,7 @@
 #include <semaphore.h>
 
 #include "relay.h"
+#include "cryptography.h"
 
 #define ENABLE_LOGGING
 
@@ -22,21 +23,26 @@ unsigned int num_active_client_threads = 0;
 
 int main(int argc, char const *argv[])
 {
-	unsigned int port;
+	unsigned int client_msg_port, cert_request_port;
 	int ret, listening_socket, client_socket;
 	int errno_cached;
 	socklen_t sockaddr_len;
 	struct sockaddr_in client_addr;
 	pthread_t client_thread_manager_thread;
+	RSA *rsa;
 
-	if(argc != 2) {
-		fprintf(stdout, "[MAIN THREAD] Usage: ./%s [PORT]\n", program_name);
+	if(argc != 3) {
+		fprintf(stdout, "[MAIN THREAD] Usage: ./%s [RELAY ID] [PORT]\n", program_name);
 		exit(-1);
 	}
-
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "[MAIN THREAD] %s program begin\n", program_name);
 	#endif
+
+	ret = load_rsa_key_pair(argv[1], &rsa);
+	if(ret < 0) {
+		exit(-2);	
+	}
 
 	sem_init(&ct_pool_sem, 0, 1);
 	sem_wait(&ct_pool_sem);
@@ -46,7 +52,7 @@ int main(int argc, char const *argv[])
 			fprintf(stdout, "[MAIN THREAD] Failed to initialize program memory");
 		#endif
 
-		exit(-2);
+		exit(-3);
 	}
 	sem_post(&ct_pool_sem);
 
@@ -57,26 +63,27 @@ int main(int argc, char const *argv[])
 			fprintf(stdout, "[MAIN THREAD] Failed to create client thread manager thread\n");
 		#endif
 
-		exit(-3);
-	}
-
-	port = (unsigned int)atoi(argv[1]);
-	if(port > PORT_MAX) {
-		fprintf(stdout, "[MAIN THREAD] Port number (%u) must be less than %u\n", port, PORT_MAX);
 		exit(-4);
 	}
 
-	ret = init_listening_socket(port, &listening_socket);
+	client_msg_port = (unsigned int)atoi(argv[2]);
+	if(client_msg_port > PORT_MAX) {
+		fprintf(stdout, "[MAIN THREAD] Port number (%u) must be less than %u\n", client_msg_port, PORT_MAX);
+		exit(-5);
+	}
+	cert_request_port = client_msg_port + 1;
+
+	ret = init_listening_socket(client_msg_port, &listening_socket);
 	if(ret < 0) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to initialize listening socket on port %u\n", port);
+			fprintf(stdout, "[MAIN THREAD] Failed to initialize listening socket on port %u\n", client_msg_port);
 		#endif
 
 		exit(-5);
 	}
 
 	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "[MAIN THREAD] %s listening on port=%u\n", program_name, port);
+		fprintf(stdout, "[MAIN THREAD] %s listening on port=%u\n", program_name, client_msg_port);
 	#endif	
 
 	while(1) {
@@ -232,38 +239,6 @@ int get_index_of_unused_thread_descriptor(client_thread_description *cthread_poo
 	return 0;
 }
 
-void *handle_client_thread(void *ptr)
-{
-	int client_socket;
-	char *pthread_ret;
-	pthread_t self_thread_id;
-
-	self_thread_id = pthread_self();
-	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "[CLIENT THREAD 0x%x] Created new client thread\n", (unsigned int)self_thread_id);
-	#endif
-
-	if(ptr == NULL) {
-		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[CLIENT THREAD 0x%x] Handle client thread created with null arguments\n", (unsigned int)self_thread_id);
-		#endif
-
-		pthread_ret = (char *)-1;
-		pthread_exit(pthread_ret);
-	}
-	client_socket = *((int *)ptr);
-
-	sleep(20);
-
-	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "[CLIENT THREAD 0x%x] Client thread exit\n", (unsigned int)self_thread_id);
-	#endif
-	close(client_socket);
-
-	pthread_ret = (char *)0;
-	pthread_exit(pthread_ret);
-}
-
 void *manage_clients_threads_thread(void *ptr)
 {
 	char *pthread_ret;
@@ -328,6 +303,36 @@ void *manage_clients_threads_thread(void *ptr)
 		}
 		sem_post(&ct_pool_sem);
 	}
+
+	pthread_ret = (char *)0;
+	pthread_exit(pthread_ret);
+}
+
+void *handle_client_thread(void *ptr)
+{
+	int client_socket;
+	char *pthread_ret;
+	pthread_t self_thread_id;
+
+	self_thread_id = pthread_self();
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "[CLIENT THREAD 0x%x] Created new client thread\n", (unsigned int)self_thread_id);
+	#endif
+
+	if(ptr == NULL) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[CLIENT THREAD 0x%x] Handle client thread created with null arguments\n", (unsigned int)self_thread_id);
+		#endif
+
+		pthread_ret = (char *)-1;
+		pthread_exit(pthread_ret);
+	}
+	client_socket = *((int *)ptr);	
+
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "[CLIENT THREAD 0x%x] Client thread exit\n", (unsigned int)self_thread_id);
+	#endif
+	close(client_socket);
 
 	pthread_ret = (char *)0;
 	pthread_exit(pthread_ret);

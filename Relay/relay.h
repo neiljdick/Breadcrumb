@@ -3,7 +3,7 @@
 
 char *program_name = "Relay";
 
-#define PORT_MAX 						(65535)
+#define PORT_MAX 						(65534)
 #define LISTEN_BACKLOG_MAX 				(50)
 
 #define NUM_CLIENT_HANDLER_THREADS 		(500)
