@@ -19,6 +19,7 @@
 #define RSA_KEY_LENGTH 				(2048)
 #define RSA_EXPONENT 				(65537)
 
+int load_public_key(const char *thread_id, RSA **rsa_public_out /* out */);
 int load_rsa_key_pair(const char *relay_id, RSA **rsa_out /* out */);
 int save_key_pair_to_file(RSA *rsa_key_pair);
 unsigned char* get_private_key_password_hash();

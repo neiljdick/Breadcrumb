@@ -16,8 +16,9 @@ typedef struct client_thread_description
 	struct client_thread_description *next;
 } client_thread_description;
 
-int init_listening_socket(unsigned int port, int *listening_socket /* out */);
+int init_listening_socket(char *thread_id, unsigned int port, int *listening_socket /* out */);
 int handle_new_client_connection(int client_socket);
+void *certificate_request_handler_thread(void *ptr);
 void *handle_client_thread(void *ptr);
 void *manage_clients_threads_thread(void *ptr);
 int initialize_ct_thread_pool(client_thread_description *cthread_pool, unsigned int thread_pool_length);

@@ -14,12 +14,43 @@ int init_cryptography_env()
 	return 0;
 }
 
+int load_public_key(const char *thread_id, RSA **rsa_public_out /* out */)
+{
+	FILE *fp_pub_key;
+
+	init_cryptography_env();
+
+	if(rsa_public_out == NULL) {
+		return -1;
+	}
+
+	fp_pub_key = fopen(RELAY_RSA_PUBLIC_KEY_FILE, "r");
+	if(fp_pub_key == NULL) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Failed to open public RSA key file\n", thread_id);
+		#endif
+
+		return -1;
+	}
+
+	*rsa_public_out = PEM_read_RSAPublicKey(fp_pub_key, NULL, NULL, NULL);
+	if(*rsa_public_out == NULL) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Failed to read public RSA key from keyfile=%s\n", thread_id, RELAY_RSA_PUBLIC_KEY_FILE);
+		#endif
+
+		return -1;
+	}
+
+	return 0;
+}
+
 int load_rsa_key_pair(const char *relay_id, RSA **rsa_out /* out */)
 {
 	FILE *fp_pub_key, *fp_priv_key;
 	int ret;
 
-	if(rsa_out == NULL) {
+	if((rsa_out == NULL) || (relay_id == NULL)) {
 		return -1;
 	}
 

@@ -28,7 +28,7 @@ int main(int argc, char const *argv[])
 	int errno_cached;
 	socklen_t sockaddr_len;
 	struct sockaddr_in client_addr;
-	pthread_t client_thread_manager_thread;
+	pthread_t certificate_request_thread, client_thread_manager_thread;
 	RSA *rsa;
 
 	if(argc != 3) {
@@ -42,6 +42,23 @@ int main(int argc, char const *argv[])
 	ret = load_rsa_key_pair(argv[1], &rsa);
 	if(ret < 0) {
 		exit(-2);	
+	}
+
+	client_msg_port = (unsigned int)atoi(argv[2]);
+	if(client_msg_port > PORT_MAX) {
+		fprintf(stdout, "[MAIN THREAD] Port number (%u) must be less than %u\n", client_msg_port, PORT_MAX);
+		exit(-5);
+	}
+	cert_request_port = client_msg_port + 1;
+
+	ret = pthread_create(&certificate_request_thread, NULL, certificate_request_handler_thread , (void *)&cert_request_port);
+	if(ret != 0) {
+		errno_cached = errno;
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[MAIN THREAD] Failed to create certificate request thread\n");
+		#endif
+
+		exit(-4);
 	}
 
 	sem_init(&ct_pool_sem, 0, 1);
@@ -66,19 +83,8 @@ int main(int argc, char const *argv[])
 		exit(-4);
 	}
 
-	client_msg_port = (unsigned int)atoi(argv[2]);
-	if(client_msg_port > PORT_MAX) {
-		fprintf(stdout, "[MAIN THREAD] Port number (%u) must be less than %u\n", client_msg_port, PORT_MAX);
-		exit(-5);
-	}
-	cert_request_port = client_msg_port + 1;
-
-	ret = init_listening_socket(client_msg_port, &listening_socket);
+	ret = init_listening_socket("[MAIN THREAD]", client_msg_port, &listening_socket);
 	if(ret < 0) {
-		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to initialize listening socket on port %u\n", client_msg_port);
-		#endif
-
 		exit(-5);
 	}
 
@@ -108,7 +114,61 @@ int main(int argc, char const *argv[])
 	return 0;
 }
 
-int init_listening_socket(unsigned int port, int *listening_socket /* out */)
+void *certificate_request_handler_thread(void *ptr)
+{
+	int ret, certificate_request_listening_socket, client_socket;
+	int errno_cached;
+	unsigned int certificate_request_port;
+	socklen_t sockaddr_len;
+	struct sockaddr_in client_addr;
+	RSA *public_key;
+
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "[CERTIFICATE REQUEST THREAD] Created certificate request handler thread\n");
+	#endif
+
+	if(ptr == NULL) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[CERTIFICATE REQUEST THREAD] Certificate request handler thread requires port as argument\n");
+		#endif
+
+		exit(-1);
+	}
+
+	ret = load_public_key("[CERTIFICATE REQUEST THREAD]", &public_key);
+	if(ret < 0) {
+		exit(-2);
+	}
+
+	certificate_request_port = *((unsigned int *)ptr);
+	ret = init_listening_socket("[CERTIFICATE REQUEST THREAD]", certificate_request_port, &certificate_request_listening_socket);
+	if(ret < 0) {
+		exit(-5);
+	}
+
+	while(1) {
+		sockaddr_len = sizeof(client_addr);
+		bzero((char *) &client_addr, sizeof(client_addr));
+		client_socket = accept(certificate_request_listening_socket, (struct sockaddr *)&client_addr, &sockaddr_len);
+		if(client_socket < 0) {
+			errno_cached = errno;
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "[CERTIFICATE REQUEST THREAD] Failed to accept client connection, %s\n", strerror(errno_cached));
+			#endif
+
+			continue;
+		}
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[CERTIFICATE REQUEST THREAD] %s:%d connected\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+		#endif
+
+		write(client_socket, (void *)public_key, sizeof(*public_key));
+		fsync(client_socket);
+		close(client_socket);
+	}
+}
+
+int init_listening_socket(char *thread_id, unsigned int port, int *listening_socket /* out */)
 {
 	struct sockaddr_in serv_addr;
 
@@ -122,7 +182,7 @@ int init_listening_socket(unsigned int port, int *listening_socket /* out */)
 	*listening_socket = socket(AF_INET, SOCK_STREAM, 0);
 	if(*listening_socket < 0){
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to create stream socket");
+			fprintf(stdout, "%s Failed to create stream socket\n", thread_id);
 		#endif
 
 		return -1;
@@ -134,7 +194,7 @@ int init_listening_socket(unsigned int port, int *listening_socket /* out */)
 	serv_addr.sin_port = htons(port);
 	if (bind(*listening_socket, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Error on binding");
+			fprintf(stdout, "%s Error on binding\n", thread_id);
 		#endif
 
 		return -1;
