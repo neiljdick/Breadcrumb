@@ -1,6 +1,19 @@
 #ifndef RELAY_HEADER
 #define RELAY_HEADER
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <string.h>
+#include <netinet/in.h>
+#include <errno.h>
+#include <pthread.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <semaphore.h>
+
 char *program_name = "Relay";
 
 #define PORT_MAX 						(65534)
@@ -8,6 +21,8 @@ char *program_name = "Relay";
 
 #define NUM_CLIENT_HANDLER_THREADS 		(500)
 #define CLIENT_HANDLER_THREAD_MAX_AGE 	(10)
+
+#define RELAY_ID_HASH_COUNT 			(3000)
 
 typedef struct client_thread_description
 {

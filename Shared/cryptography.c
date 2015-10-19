@@ -14,13 +14,12 @@ int init_cryptography_env()
 	return 0;
 }
 
-int load_public_key(const char *thread_id, RSA **rsa_public_out /* out */)
+int load_public_key_into_buffer(const char *thread_id, char **rsa_public_out /* out */, int *public_key_buffer_len /* out */)
 {
+	int num_bytes, num_bytes_read;
 	FILE *fp_pub_key;
 
-	init_cryptography_env();
-
-	if(rsa_public_out == NULL) {
+	if((thread_id == NULL) || (rsa_public_out == NULL)) {
 		return -1;
 	}
 
@@ -32,15 +31,29 @@ int load_public_key(const char *thread_id, RSA **rsa_public_out /* out */)
 
 		return -1;
 	}
+	
+	fseek(fp_pub_key, 0L, SEEK_END);
+	num_bytes = ftell(fp_pub_key);
+	fseek(fp_pub_key, 0L, SEEK_SET);
 
-	*rsa_public_out = PEM_read_RSAPublicKey(fp_pub_key, NULL, NULL, NULL);
+	*rsa_public_out = calloc(num_bytes, sizeof(char));
 	if(*rsa_public_out == NULL) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "%s Failed to read public RSA key from keyfile=%s\n", thread_id, RELAY_RSA_PUBLIC_KEY_FILE);
+			fprintf(stdout, "%s Failed to allocate memory for public key as bytes buffer\n", thread_id);
+		#endif
+
+		return -1;	
+	}
+
+	num_bytes_read = fread((*rsa_public_out), sizeof(char), num_bytes, fp_pub_key);
+	if(num_bytes_read != num_bytes) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Failed to read %u bytes from public key file into buffer\n", thread_id, num_bytes);
 		#endif
 
 		return -1;
 	}
+	*public_key_buffer_len = num_bytes;
 
 	return 0;
 }
@@ -276,4 +289,43 @@ int generate_rsa_key_pair(const char *relay_id, RSA **rsa_out /* out */)
 	}
 
 	return 0;
+}
+
+int get_hash_of_string(char *thread_id, int hash_count, const char *in_str, char **out_str /* out */, int *relay_id_len /* out */)
+{
+	char tmp_hash[SHA256_DIGEST_LENGTH];
+	SHA256_CTX sha256;
+	int i;
+	char buf[2];
+
+	if((in_str == NULL) || (out_str == NULL)) {
+		return -1;
+	}
+
+	*relay_id_len = (SHA256_DIGEST_LENGTH*2);
+	*out_str = calloc((SHA256_DIGEST_LENGTH*2), sizeof(char));
+	if(*out_str == NULL) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Failed to allocate memory for string hash\n", thread_id);
+		#endif
+
+		return -1;
+	}
+
+	init_cryptography_env();
+
+	strncpy(tmp_hash, in_str, SHA256_DIGEST_LENGTH);
+	SHA256_Init(&sha256);
+    for (i = 0; i < hash_count; i++) {
+	    SHA256_Update(&sha256, tmp_hash, SHA256_DIGEST_LENGTH);    	
+    }
+    SHA256_Final((unsigned char *)tmp_hash, &sha256);
+
+    for (i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
+    	sprintf(buf, "%02x", 0xff & tmp_hash[i]);
+    	(*out_str)[(i*2)] = buf[0];
+    	(*out_str)[(i*2)+1] = buf[1];
+    }
+
+    return 0;
 }

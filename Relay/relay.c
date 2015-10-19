@@ -1,18 +1,5 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <string.h>
-#include <netinet/in.h>
-#include <errno.h>
-#include <pthread.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <semaphore.h>
-
 #include "relay.h"
-#include "cryptography.h"
+#include "../Shared/cryptography.h"
 
 #define ENABLE_LOGGING
 
@@ -21,9 +8,12 @@ client_thread_description cthread_pool[NUM_CLIENT_HANDLER_THREADS];
 client_thread_description *first_ct = NULL, *last_ct = NULL;
 unsigned int num_active_client_threads = 0;
 
+unsigned int client_msg_port, cert_request_port;
+char *relay_id;
+int relay_id_len;
+
 int main(int argc, char const *argv[])
 {
-	unsigned int client_msg_port, cert_request_port;
 	int ret, listening_socket, client_socket;
 	int errno_cached;
 	socklen_t sockaddr_len;
@@ -39,7 +29,15 @@ int main(int argc, char const *argv[])
 		fprintf(stdout, "[MAIN THREAD] %s program begin\n", program_name);
 	#endif
 
-	ret = load_rsa_key_pair(argv[1], &rsa);
+	ret = get_hash_of_string("[MAIN THREAD]", RELAY_ID_HASH_COUNT, argv[1], &relay_id, &relay_id_len);
+	if(ret < 0) {
+		exit(-2);	
+	}
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "[MAIN THREAD] Relay id=%s\n", relay_id);
+	#endif
+
+	ret = load_rsa_key_pair(relay_id, &rsa);
 	if(ret < 0) {
 		exit(-2);	
 	}
@@ -51,7 +49,7 @@ int main(int argc, char const *argv[])
 	}
 	cert_request_port = client_msg_port + 1;
 
-	ret = pthread_create(&certificate_request_thread, NULL, certificate_request_handler_thread , (void *)&cert_request_port);
+	ret = pthread_create(&certificate_request_thread, NULL, certificate_request_handler_thread , NULL);
 	if(ret != 0) {
 		errno_cached = errno;
 		#ifdef ENABLE_LOGGING
@@ -87,7 +85,6 @@ int main(int argc, char const *argv[])
 	if(ret < 0) {
 		exit(-5);
 	}
-
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "[MAIN THREAD] %s listening on port=%u\n", program_name, client_msg_port);
 	#endif	
@@ -118,30 +115,21 @@ void *certificate_request_handler_thread(void *ptr)
 {
 	int ret, certificate_request_listening_socket, client_socket;
 	int errno_cached;
-	unsigned int certificate_request_port;
 	socklen_t sockaddr_len;
 	struct sockaddr_in client_addr;
-	RSA *public_key;
+	char *public_key_buffer;
+	int public_key_buffer_len;
 
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "[CERTIFICATE REQUEST THREAD] Created certificate request handler thread\n");
 	#endif
 
-	if(ptr == NULL) {
-		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[CERTIFICATE REQUEST THREAD] Certificate request handler thread requires port as argument\n");
-		#endif
-
-		exit(-1);
-	}
-
-	ret = load_public_key("[CERTIFICATE REQUEST THREAD]", &public_key);
+	ret = load_public_key_into_buffer("[CERTIFICATE REQUEST THREAD]", &public_key_buffer, &public_key_buffer_len);
 	if(ret < 0) {
 		exit(-2);
 	}
 
-	certificate_request_port = *((unsigned int *)ptr);
-	ret = init_listening_socket("[CERTIFICATE REQUEST THREAD]", certificate_request_port, &certificate_request_listening_socket);
+	ret = init_listening_socket("[CERTIFICATE REQUEST THREAD]", cert_request_port, &certificate_request_listening_socket);
 	if(ret < 0) {
 		exit(-5);
 	}
@@ -159,10 +147,11 @@ void *certificate_request_handler_thread(void *ptr)
 			continue;
 		}
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[CERTIFICATE REQUEST THREAD] %s:%d connected\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+			fprintf(stdout, "[CERTIFICATE REQUEST THREAD] %s:%d requested certificate\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 		#endif
 
-		write(client_socket, (void *)public_key, sizeof(*public_key));
+		write(client_socket, (void *)relay_id, relay_id_len);
+		write(client_socket, (void *)public_key_buffer, public_key_buffer_len);
 		fsync(client_socket);
 		close(client_socket);
 	}
