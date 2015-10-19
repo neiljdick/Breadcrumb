@@ -14,7 +14,13 @@
 #include <arpa/inet.h>
 #include <semaphore.h>
 
-char *program_name = "Relay";
+const char *program_name = "Relay";
+
+const char *msg_handler_str 		= "MSG HANDLER";
+const char *id_cache_handler_str 	= "ID CACHE HANDLER";
+const char *unknown_str 			= "UNKNOWN";
+
+#define POOL_ID_LEN 					(64)
 
 #define PORT_MAX 						(65533)
 #define LISTEN_BACKLOG_MAX 				(50)
@@ -31,6 +37,10 @@ char *program_name = "Relay";
 #define MSG_THREAD_POOL_INDEX			(0)
 #define USER_ID_CACHE_POOL_INDEX		(1)
 
+#define MAIN_THREAD_SLEEP_SEC 			(10)
+#define CERT_REQUEST_SLEEP_US 			(50000)
+#define ID_CACHE_SLEEP_US 				(50000)
+
 typedef struct client_thread_description
 {
 	pthread_t thread_id;
@@ -41,6 +51,7 @@ typedef struct client_thread_description
 typedef struct thread_pool
 {
 	sem_t ct_pool_sem;
+	void *(*start_routine) (void *);
 	unsigned int thread_pool_length;
 	unsigned int thread_pool_max_age;
 	client_thread_description *cthread_pool;
@@ -49,11 +60,15 @@ typedef struct thread_pool
 } thread_pool;
 
 int init_listening_socket(char *thread_id, unsigned int port, int *listening_socket /* out */);
-int handle_new_msg_client_connection(int client_socket);
+int add_new_thread_to_pool(char *thread_id, int thread_pool_index, int client_socket);
 void *certificate_request_handler_thread(void *ptr);
-void *handle_client_thread(void *ptr);
+void *handle_msg_client_thread(void *ptr);
+void *handle_id_cache_thread(void *ptr);
 void *thread_pool_manager_thread_thread(void *ptr);
+void *client_msg_new_connection_handler(void *ptr);
+void *client_id_cache_handler(void *ptr);
 int initialize_thread_pools();
 int get_index_of_unused_thread_descriptor(client_thread_description *cthread_pool, unsigned int thread_pool_length, int *index /* out */);
+int get_thread_pool_id_from_index(int index, char *pool_id /* out */);
 
 #endif

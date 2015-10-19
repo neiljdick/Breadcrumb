@@ -11,15 +11,14 @@ client_thread_description user_id_cache_pool[NUM_USER_ID_CACHE_THREADS];
 unsigned int client_msg_port, id_cache_port, cert_request_port;
 char *relay_id;
 int relay_id_len;
+RSA *rsa;
 
 int main(int argc, char const *argv[])
 {
-	int ret, listening_socket, client_socket;
+	int ret;
 	int errno_cached;
-	socklen_t sockaddr_len;
-	struct sockaddr_in client_addr;
 	pthread_t certificate_request_thread, thread_pool_manager_thread;
-	RSA *rsa;
+	pthread_t client_msg_new_connection_handler_thread, client_id_cache_handler_thread;
 
 	if(argc != 3) {
 		fprintf(stdout, "[MAIN THREAD] Usage: ./%s [RELAY ID] [PORT]\n", program_name);
@@ -55,16 +54,6 @@ int main(int argc, char const *argv[])
 	id_cache_port = client_msg_port + 1;
 	cert_request_port = client_msg_port + 2;
 
-	ret = pthread_create(&certificate_request_thread, NULL, certificate_request_handler_thread , NULL);
-	if(ret != 0) {
-		errno_cached = errno;
-		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to create certificate request thread\n");
-		#endif
-
-		exit(-4);
-	}
-
 	ret = initialize_thread_pools();
 	if(ret < 0) {
 		#ifdef ENABLE_LOGGING
@@ -78,38 +67,43 @@ int main(int argc, char const *argv[])
 	if(ret != 0) {
 		errno_cached = errno;
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to create thread pool manager thread\n");
+			fprintf(stdout, "[MAIN THREAD] Failed to create thread pool manager thread, %s\n", strerror(errno_cached));
 		#endif
 
 		exit(-4);
 	}
 
-	ret = init_listening_socket("[MAIN THREAD]", client_msg_port, &listening_socket);
-	if(ret < 0) {
-		exit(-5);
-	}
-	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "[MAIN THREAD] %s listening on port=%u\n", program_name, client_msg_port);
-	#endif	
-
-	while(1) {
-		sockaddr_len = sizeof(client_addr);
-		bzero((char *) &client_addr, sizeof(client_addr));
-		client_socket = accept(listening_socket, (struct sockaddr *)&client_addr, &sockaddr_len);
-		if(client_socket < 0) {
-			errno_cached = errno;
-			#ifdef ENABLE_LOGGING
-				fprintf(stdout, "[MAIN THREAD] Failed to accept client connection, %s\n", strerror(errno_cached));
-			#endif
-
-			continue;
-		}
+	ret = pthread_create(&certificate_request_thread, NULL, certificate_request_handler_thread , NULL);
+	if(ret != 0) {
+		errno_cached = errno;
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] %s:%d connected\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+			fprintf(stdout, "[MAIN THREAD] Failed to create certificate request thread, %s\n", strerror(errno_cached));
 		#endif
 
-		handle_new_msg_client_connection(client_socket);
+		exit(-4);
 	}
+
+	ret = pthread_create(&client_msg_new_connection_handler_thread, NULL, client_msg_new_connection_handler, NULL);
+	if(ret != 0) {
+		errno_cached = errno;
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[MAIN THREAD] Failed to create new msg connection handler thread, %s\n", strerror(errno_cached));
+		#endif
+
+		exit(-4);
+	}
+
+	ret = pthread_create(&client_id_cache_handler_thread, NULL, client_id_cache_handler, NULL);
+	if(ret != 0) {
+		errno_cached = errno;
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[MAIN THREAD] Failed to create new msg connection handler thread, %s\n", strerror(errno_cached));
+		#endif
+
+		exit(-4);
+	}
+
+	while(1) sleep(MAIN_THREAD_SLEEP_SEC);
 
 	return 0;
 }
@@ -117,11 +111,10 @@ int main(int argc, char const *argv[])
 void *certificate_request_handler_thread(void *ptr)
 {
 	int ret, certificate_request_listening_socket, client_socket;
-	int errno_cached;
+	int errno_cached, public_key_buffer_len;
 	socklen_t sockaddr_len;
 	struct sockaddr_in client_addr;
 	char *public_key_buffer;
-	int public_key_buffer_len;
 
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "[CERTIFICATE REQUEST THREAD] Created certificate request handler thread\n");
@@ -157,6 +150,80 @@ void *certificate_request_handler_thread(void *ptr)
 		write(client_socket, (void *)public_key_buffer, public_key_buffer_len);
 		fsync(client_socket);
 		close(client_socket);
+
+		usleep(CERT_REQUEST_SLEEP_US);
+	}
+}
+
+void *client_msg_new_connection_handler(void *ptr)
+{
+	int ret, listening_socket, client_socket;
+	int errno_cached;
+	socklen_t sockaddr_len;
+	struct sockaddr_in client_addr;
+
+	ret = init_listening_socket("[MSG CONNECTION HANDLER THREAD]", client_msg_port, &listening_socket);
+	if(ret < 0) {
+		exit(-5);
+	}
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "[MSG CONNECTION HANDLER THREAD] listening on port=%u\n", client_msg_port);
+	#endif	
+
+	while(1) {
+		sockaddr_len = sizeof(client_addr);
+		bzero((char *) &client_addr, sizeof(client_addr));
+		client_socket = accept(listening_socket, (struct sockaddr *)&client_addr, &sockaddr_len);
+		if(client_socket < 0) {
+			errno_cached = errno;
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "[MSG CONNECTION HANDLER THREAD] Failed to accept client connection, %s\n", strerror(errno_cached));
+			#endif
+
+			continue;
+		}
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[MSG CONNECTION HANDLER THREAD] %s:%d connected\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+		#endif
+
+		add_new_thread_to_pool("[MSG CONNECTION HANDLER THREAD]", MSG_THREAD_POOL_INDEX, client_socket);
+	}
+}
+
+void *client_id_cache_handler(void *ptr)
+{
+	int ret, listening_socket, client_socket;
+	int errno_cached;
+	socklen_t sockaddr_len;
+	struct sockaddr_in client_addr;
+
+	ret = init_listening_socket("[ID CACHE HANDLER THREAD]", id_cache_port, &listening_socket);
+	if(ret < 0) {
+		exit(-5);
+	}
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "[ID CACHE HANDLER THREAD] Listening on port=%u\n", id_cache_port);
+	#endif	
+
+	while(1) {
+		sockaddr_len = sizeof(client_addr);
+		bzero((char *) &client_addr, sizeof(client_addr));
+		client_socket = accept(listening_socket, (struct sockaddr *)&client_addr, &sockaddr_len);
+		if(client_socket < 0) {
+			errno_cached = errno;
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "[ID CACHE HANDLER THREAD] Failed to accept client connection, %s\n", strerror(errno_cached));
+			#endif
+
+			continue;
+		}
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[ID CACHE HANDLER THREAD] %s:%d connected\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+		#endif
+
+		add_new_thread_to_pool("[ID CACHE HANDLER THREAD]", USER_ID_CACHE_POOL_INDEX, client_socket);
+
+		usleep(ID_CACHE_SLEEP_US);
 	}
 }
 
@@ -196,7 +263,7 @@ int init_listening_socket(char *thread_id, unsigned int port, int *listening_soc
 	return 0;
 }
 
-int handle_new_msg_client_connection(int client_socket)
+int add_new_thread_to_pool(char *thread_id, int thread_pool_index, int client_socket)
 {
 	int ret, errno_cached;
 	int unused_thread_index;
@@ -205,51 +272,54 @@ int handle_new_msg_client_connection(int client_socket)
 		return -1;
 	}
 
-	sem_wait(&(thread_pools[MSG_THREAD_POOL_INDEX].ct_pool_sem));
-	if(thread_pools[MSG_THREAD_POOL_INDEX].num_active_client_threads >= NUM_MSG_HANDLER_THREADS) {
+	sem_wait(&(thread_pools[thread_pool_index].ct_pool_sem));
+	if(thread_pools[thread_pool_index].num_active_client_threads >= thread_pools[thread_pool_index].thread_pool_length) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Unable to accept new client socket connections as number of connections (%u) \
-				has reached maximum allowed\n", thread_pools[MSG_THREAD_POOL_INDEX].num_active_client_threads);
+			fprintf(stdout, "%s Unable to accept new client socket connections as number of connections (%u) \
+				has reached maximum allowed\n", thread_id, thread_pools[thread_pool_index].num_active_client_threads);
 		#endif
 
 		close(client_socket);
-		sem_post(&(thread_pools[MSG_THREAD_POOL_INDEX].ct_pool_sem));
+		sem_post(&(thread_pools[thread_pool_index].ct_pool_sem));
 		return -1;
 	}
 
-	get_index_of_unused_thread_descriptor(thread_pools[MSG_THREAD_POOL_INDEX].cthread_pool, (sizeof(msg_client_pool)/sizeof(client_thread_description)), &unused_thread_index);
+	get_index_of_unused_thread_descriptor(thread_pools[thread_pool_index].cthread_pool, thread_pools[thread_pool_index].thread_pool_length, &unused_thread_index);
 	if(unused_thread_index == -1) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Client thread pool reached maximum, rejecting client connection attempt");
+			fprintf(stdout, "%s Client thread pool reached maximum, rejecting client connection attempt\n", thread_id);
 		#endif
 
 		close(client_socket);
-		sem_post(&(thread_pools[MSG_THREAD_POOL_INDEX].ct_pool_sem));
+		sem_post(&(thread_pools[thread_pool_index].ct_pool_sem));
 		return -1;
 	}
 
-	ret = pthread_create(&(thread_pools[MSG_THREAD_POOL_INDEX].cthread_pool[unused_thread_index].thread_id), NULL, handle_client_thread, &client_socket);
+	ret = pthread_create(&(thread_pools[thread_pool_index].cthread_pool[unused_thread_index].thread_id), NULL, thread_pools[thread_pool_index].start_routine, &client_socket);
 	if(ret != 0) {
 		errno_cached = errno;
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to create client handler thread, %s\n", strerror(errno_cached));
+			fprintf(stdout, "%s Failed to create client handler thread, %s\n", thread_id, strerror(errno_cached));
 		#endif
 
 		close(client_socket);
-		sem_post(&(thread_pools[MSG_THREAD_POOL_INDEX].ct_pool_sem));
+		sem_post(&(thread_pools[thread_pool_index].ct_pool_sem));
 		return -1;
 	}
-	thread_pools[MSG_THREAD_POOL_INDEX].cthread_pool[unused_thread_index].thread_age = 0;
-	thread_pools[MSG_THREAD_POOL_INDEX].cthread_pool[unused_thread_index].next = NULL;
-	if(thread_pools[MSG_THREAD_POOL_INDEX].first_ct == NULL) {
-		thread_pools[MSG_THREAD_POOL_INDEX].first_ct = &(thread_pools[MSG_THREAD_POOL_INDEX].cthread_pool[unused_thread_index]);
-		thread_pools[MSG_THREAD_POOL_INDEX].last_ct = thread_pools[MSG_THREAD_POOL_INDEX].first_ct;
+	thread_pools[thread_pool_index].cthread_pool[unused_thread_index].thread_age = 0;
+	thread_pools[thread_pool_index].cthread_pool[unused_thread_index].next = NULL;
+	if(thread_pools[thread_pool_index].first_ct == NULL) {
+		thread_pools[thread_pool_index].first_ct = &(thread_pools[thread_pool_index].cthread_pool[unused_thread_index]);
+		thread_pools[thread_pool_index].last_ct = thread_pools[thread_pool_index].first_ct;
 	} else {
-		thread_pools[MSG_THREAD_POOL_INDEX].first_ct->next = &(thread_pools[MSG_THREAD_POOL_INDEX].cthread_pool[unused_thread_index]);
-		thread_pools[MSG_THREAD_POOL_INDEX].first_ct = thread_pools[MSG_THREAD_POOL_INDEX].first_ct->next;
+		thread_pools[thread_pool_index].first_ct->next = &(thread_pools[thread_pool_index].cthread_pool[unused_thread_index]);
+		thread_pools[thread_pool_index].first_ct = thread_pools[thread_pool_index].first_ct->next;
 	}
-	thread_pools[MSG_THREAD_POOL_INDEX].num_active_client_threads++;
-	sem_post(&(thread_pools[MSG_THREAD_POOL_INDEX].ct_pool_sem));
+	thread_pools[thread_pool_index].num_active_client_threads++;
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "%s New number of active client threads: %u\n", thread_id, thread_pools[thread_pool_index].num_active_client_threads);
+	#endif
+	sem_post(&(thread_pools[thread_pool_index].ct_pool_sem));
 
 	return 0;
 }
@@ -260,6 +330,9 @@ int initialize_thread_pools()
 
 	sem_init(&thread_pools[MSG_THREAD_POOL_INDEX].ct_pool_sem, 0, 1);
 	sem_init(&thread_pools[USER_ID_CACHE_POOL_INDEX].ct_pool_sem, 0, 1);
+
+	thread_pools[MSG_THREAD_POOL_INDEX].start_routine = handle_msg_client_thread;
+	thread_pools[USER_ID_CACHE_POOL_INDEX].start_routine = handle_id_cache_thread;
 
 	thread_pools[MSG_THREAD_POOL_INDEX].thread_pool_length = NUM_MSG_HANDLER_THREADS;
 	thread_pools[USER_ID_CACHE_POOL_INDEX].thread_pool_length = NUM_USER_ID_CACHE_THREADS;
@@ -318,6 +391,7 @@ void *thread_pool_manager_thread_thread(void *ptr)
 	int ret, i;
 	void *res;
 	struct client_thread_description *ct_descript_node, *ct_descript_node_prev;
+	char pool_id_buf[POOL_ID_LEN];
 
 	self_thread_id = pthread_self();
 	#ifdef ENABLE_LOGGING
@@ -333,7 +407,8 @@ void *thread_pool_manager_thread_thread(void *ptr)
 			ct_descript_node_prev = NULL;
 			if(ct_descript_node == NULL) {
 				#ifdef ENABLE_LOGGING
-					fprintf(stdout, "[MANAGE CLIENT THREAD 0x%x] Found no client threads to manage\n", (unsigned int)self_thread_id);
+					get_thread_pool_id_from_index(i, pool_id_buf);
+					fprintf(stdout, "[MANAGE CLIENT THREAD 0x%x] Found no client threads to manage for thread pool = %s\n", (unsigned int)self_thread_id, pool_id_buf);
 				#endif
 			} else {
 				while(ct_descript_node != NULL) {
@@ -369,6 +444,9 @@ void *thread_pool_manager_thread_thread(void *ptr)
 						}
 						if(thread_pools[i].num_active_client_threads != 0) {
 							thread_pools[i].num_active_client_threads--;
+							#ifdef ENABLE_LOGGING
+								fprintf(stdout, "[MSG CONNECTION HANDLER THREAD] New number of active client threads: %u\n", thread_pools[i].num_active_client_threads);
+							#endif
 						}
 						free(res);
 					}
@@ -382,7 +460,7 @@ void *thread_pool_manager_thread_thread(void *ptr)
 	pthread_exit(pthread_ret);
 }
 
-void *handle_client_thread(void *ptr)
+void *handle_msg_client_thread(void *ptr)
 {
 	int client_socket;
 	char *pthread_ret;
@@ -390,12 +468,12 @@ void *handle_client_thread(void *ptr)
 
 	self_thread_id = pthread_self();
 	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "[CLIENT THREAD 0x%x] Created new client thread\n", (unsigned int)self_thread_id);
+		fprintf(stdout, "[MSG CLIENT THREAD 0x%x] Created new client thread\n", (unsigned int)self_thread_id);
 	#endif
 
 	if(ptr == NULL) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[CLIENT THREAD 0x%x] Handle client thread created with null arguments\n", (unsigned int)self_thread_id);
+			fprintf(stdout, "[MSG CLIENT THREAD 0x%x] Handle client thread created with null arguments\n", (unsigned int)self_thread_id);
 		#endif
 
 		pthread_ret = (char *)-1;
@@ -403,13 +481,63 @@ void *handle_client_thread(void *ptr)
 	}
 	client_socket = *((int *)ptr);	
 
-	sleep(5);
+	sleep(15);
 
 	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "[CLIENT THREAD 0x%x] Client thread exit\n", (unsigned int)self_thread_id);
+		fprintf(stdout, "[MSG CLIENT THREAD 0x%x] Client thread exit\n", (unsigned int)self_thread_id);
 	#endif
 	close(client_socket);
 
 	pthread_ret = (char *)0;
 	pthread_exit(pthread_ret);
+}
+
+void *handle_id_cache_thread(void *ptr)
+{
+	int client_socket;
+	char *pthread_ret;
+	pthread_t self_thread_id;
+
+	self_thread_id = pthread_self();
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "[ID CACHE CLIENT THREAD 0x%x] Created new client thread\n", (unsigned int)self_thread_id);
+	#endif
+
+	if(ptr == NULL) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[ID CACHE CLIENT THREAD 0x%x] Handle client thread created with null arguments\n", (unsigned int)self_thread_id);
+		#endif
+
+		pthread_ret = (char *)-1;
+		pthread_exit(pthread_ret);
+	}
+	client_socket = *((int *)ptr);	
+
+	sleep(15);
+
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "[ID CACHE CLIENT THREAD 0x%x] Client thread exit\n", (unsigned int)self_thread_id);
+	#endif
+	close(client_socket);
+
+	pthread_ret = (char *)0;
+	pthread_exit(pthread_ret);
+}
+
+int get_thread_pool_id_from_index(int index, char *pool_id /* out */)
+{
+	if(pool_id == NULL) {
+		return -1;
+	}
+
+	memset(pool_id, 0, POOL_ID_LEN);
+	if(index == MSG_THREAD_POOL_INDEX) {
+		memcpy(pool_id, msg_handler_str, strlen(msg_handler_str));
+	} else if (index == USER_ID_CACHE_POOL_INDEX) {
+		memcpy(pool_id, id_cache_handler_str, strlen(id_cache_handler_str));
+	} else {
+		memcpy(pool_id, unknown_str, strlen(unknown_str));
+	}
+
+	return 0;
 }
