@@ -291,6 +291,24 @@ int generate_rsa_key_pair(const char *relay_id, RSA **rsa_out /* out */)
 	return 0;
 }
 
+int generate_AES_key(unsigned char *seed, unsigned char *buf, int buf_len)
+{
+	int ret;
+
+	if((seed == NULL) || (buf == NULL)) {
+		return -1;
+	}
+
+	init_cryptography_env();
+
+	RAND_seed((const void *)seed, strlen((char *)seed));
+	ret = RAND_bytes(buf, buf_len);
+	if(ret != 1) {
+		return -1;
+	}
+	return 0;
+}
+
 int get_hash_of_string(char *thread_id, int hash_count, const char *in_str, char **out_str /* out */, int *relay_id_len /* out */)
 {
 	char tmp_hash[SHA256_DIGEST_LENGTH];

@@ -1,6 +1,4 @@
 #include "client.h"
-#include "../Shared/key_storage.h"
-#include "../Shared/cryptography.h"
 
 #define ENABLE_LOGGING
 #define DEBUG_MODE
@@ -9,7 +7,7 @@
 	static int debug_convo_count = 0;
 #endif
 
-char user_id[USER_NAME_MAX_LENGTH];
+unsigned char user_id[USER_NAME_MAX_LENGTH];
 conversation_info conversations[MAX_CONVERSATIONS];
 int message_port, id_cache_port, cert_request_port;
 
@@ -34,7 +32,7 @@ int main(int argc, char const *argv[])
 	id_cache_port = message_port + 1;
 	cert_request_port = message_port + 2;
 	memset(user_id, 0, sizeof(user_id));
-	strncpy(user_id, argv[1], (USER_NAME_MAX_LENGTH-1));
+	strncpy((char *)user_id, argv[1], (USER_NAME_MAX_LENGTH-1));
 	memset(friend_id, 0, sizeof(friend_id));
 	memset(conversations, 0, sizeof(conversations));
 
@@ -220,9 +218,12 @@ int get_relay_public_certificates_debug(relay_info *ri_pool)
 
 int register_user_id_with_active_relays(relay_info *ri_pool)
 {
-	int i;
+	int ret, i;
 	unsigned int initial_seed_value;
 	unsigned int first_relay_index, max_valid_relay_index;
+	id_cache_data ic_data;
+	unsigned int relay_user_id;
+	unsigned char ciphertext[RSA_KEY_LENGTH_BYTES];
 
 	for (i = (RELAY_POOL_MAX_SIZE-1); i >= 0; i--) {
 		if(ri_pool[i].public_cert != NULL) {
@@ -239,7 +240,7 @@ int register_user_id_with_active_relays(relay_info *ri_pool)
 	}
 
 	while(1) {
-		for (i = 0; (i+4) < strlen(user_id); i+=4) {
+		for (i = 0; (i+4) < strlen((char *)user_id); i+=4) {
 			initial_seed_value ^= (((unsigned int)user_id[0])<<24) | (((unsigned int)user_id[1])<<16) | (((unsigned int)user_id[2])<<8) | ((unsigned int)user_id[3]);
 		}
 		first_relay_index = get_pseudo_random_number(initial_seed_value);
@@ -250,6 +251,39 @@ int register_user_id_with_active_relays(relay_info *ri_pool)
 	}
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "[MAIN THREAD] First relay = %s\n", ri_pool[first_relay_index].relay_ip);
+	#endif
+
+	ret = generate_AES_key(user_id, ri_pool[first_relay_index].aes_key, AES_KEY_SIZE_BYTES);
+	if(ret < 0) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[MAIN THREAD] Failed to generate AES key, required for relay id cache\n");
+		#endif
+
+		return -1;
+	}
+	for (i = 0; (i+4) < strlen((char *)user_id); i+=4) {
+		initial_seed_value ^= (((unsigned int)user_id[3])<<24) | (((unsigned int)user_id[2])<<16) | (((unsigned int)user_id[1])<<8) | ((unsigned int)user_id[0]);
+	}
+	relay_user_id = get_pseudo_random_number(initial_seed_value);
+	relay_user_id %= get_max_user_id();
+	ri_pool[first_relay_index].relay_user_id = relay_user_id;
+
+	memcpy(ic_data.aes_key, ri_pool[first_relay_index].aes_key, AES_KEY_SIZE_BYTES);
+	ic_data.relay_user_id = relay_user_id;
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "[MAIN THREAD] Generated first relay user id: %u\n", ic_data.relay_user_id);
+	#endif
+
+	ret = RSA_public_encrypt(sizeof(id_cache_data), (const unsigned char *)&ic_data, ciphertext, ri_pool[first_relay_index].public_cert, RSA_PKCS1_OAEP_PADDING);
+	if(ret != RSA_KEY_LENGTH_BYTES) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[MAIN THREAD] Failed to encrypt id cache data\n");
+		#endif
+
+		return -1;
+	}
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "[MAIN THREAD] Encrypted %u bytes of data\n", ret);
 	#endif
 
 	return 0;

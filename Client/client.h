@@ -19,6 +19,9 @@
 #include <openssl/rsa.h>
 #include <openssl/pem.h>
 
+#include "../Shared/key_storage.h"
+#include "../Shared/cryptography.h"
+
 char *program_name = "Client";
 
 #define PORT_MAX 						(65533)
@@ -43,10 +46,18 @@ typedef struct relay_indexer_info
 	RSA *public_cert;
 } relay_indexer_info;
 
+typedef struct id_cache_data
+{
+	char aes_key[AES_KEY_SIZE_BYTES];
+	unsigned int relay_user_id;
+} id_cache_data;
+
 typedef struct relay_info
 {
 	char relay_id[(SHA256_DIGEST_LENGTH * 2) + 1];
 	char relay_ip[RELAY_IP_MAX_LENGTH];
+	unsigned char aes_key[AES_KEY_SIZE_BYTES];
+	unsigned int relay_user_id;
 	RSA *public_cert;
 } relay_info;
 

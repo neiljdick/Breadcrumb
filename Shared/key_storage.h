@@ -24,5 +24,6 @@ int free_key_store(char *thread_id);
 int remove_key_from_key_store(char *thread_id, unsigned int user_id);
 int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in);
 int get_key_for_user_id(char *thread_id, unsigned int user_id, key *key_out /* out */);
+int get_max_user_id(void);
 
 #endif

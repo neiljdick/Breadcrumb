@@ -18,6 +18,7 @@
 #define RELAY_RSA_PRIVATE_KEY_FILE 	("relay_private_rsa_key.pem")
 
 #define RSA_KEY_LENGTH 				(2048)
+#define RSA_KEY_LENGTH_BYTES		(RSA_KEY_LENGTH/8)
 #define RSA_EXPONENT 				(65537)
 
 int load_public_key_into_buffer(const char *thread_id, char **rsa_public_out /* out */, int *public_key_buffer_len /* out */);
@@ -28,5 +29,6 @@ int generate_rsa_key_pair(const char *relay_id, RSA **rsa_out /* out */);
 int cb(char *buf, int size, int rwflag, void *u);
 int get_hash_of_string(char *thread_id, int hash_count, const char *in_str, char **out_str /* out */, int *relay_id_len /* out */);
 int get_pseudo_random_number(unsigned int initial_seed);
+int generate_AES_key(unsigned char *seed, unsigned char *buf, int buf_len);
 
 #endif 

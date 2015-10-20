@@ -129,3 +129,10 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, key *key_out /* o
 
 	return 0;
 }
+
+int get_max_user_id(void)
+{
+	init_key_store("[MAIN THREAD]");
+
+	return max_user_id;
+}
