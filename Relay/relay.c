@@ -1,5 +1,5 @@
 #include "relay.h"
-#include "key_storage.h"
+#include "../Shared/key_storage.h"
 #include "../Shared/cryptography.h"
 
 #define ENABLE_LOGGING

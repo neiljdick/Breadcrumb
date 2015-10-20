@@ -23,7 +23,9 @@ int init_key_store(char *thread_id)
 	if(key_store == NULL) {
 		#ifdef ENABLE_LOGGING
 			fprintf(stdout, "%s Failed to allocate memory for key storage\n", thread_id);
-		#endif		
+		#endif
+
+		return -1;
 	}
 
 	#ifdef ENABLE_LOGGING

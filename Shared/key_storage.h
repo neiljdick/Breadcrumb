@@ -7,7 +7,8 @@
 #include <math.h>
 #include <string.h>
 
-#define USER_ID_BITS 			(24)
+#define USER_ID_BITS 			(20) // Raspberry PI 1
+//#define USER_ID_BITS 			(24) // Raspberry PI 2
 
 #define AES_KEY_SIZE_BITS 		(128)
 #define AES_KEY_SIZE_BYTES 		(AES_KEY_SIZE_BITS/8)
