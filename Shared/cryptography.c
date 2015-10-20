@@ -329,3 +329,24 @@ int get_hash_of_string(char *thread_id, int hash_count, const char *in_str, char
 
     return 0;
 }
+
+int get_pseudo_random_number(unsigned int initial_seed)
+{
+	unsigned int seed, rand_val;
+	FILE* dev_urandom;
+
+	dev_urandom = fopen("/dev/urandom", "r");
+	if(dev_urandom == NULL) {
+		seed = initial_seed ^ (unsigned int)time(NULL);
+	} else {
+		fread(&seed, sizeof(unsigned int), 1, dev_urandom);
+		seed ^= initial_seed;
+		seed ^= (unsigned int)time(NULL);
+		fclose(dev_urandom);
+	}
+
+	srand(seed);
+	rand_val = rand();
+
+	return rand_val;
+}
