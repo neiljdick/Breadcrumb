@@ -291,17 +291,41 @@ int generate_rsa_key_pair(const char *relay_id, RSA **rsa_out /* out */)
 	return 0;
 }
 
-int generate_AES_key(unsigned char *seed, unsigned char *buf, int buf_len)
+int generate_AES_key(unsigned char *buf, int buf_len)
 {
 	int ret;
 
-	if((seed == NULL) || (buf == NULL)) {
+	if(buf == NULL) {
 		return -1;
 	}
 
 	init_cryptography_env();
+	ret = RAND_status();
+	if(ret != 1) {
+		return -1;
+	}
 
-	RAND_seed((const void *)seed, strlen((char *)seed));
+	ret = RAND_bytes(buf, buf_len);
+	if(ret != 1) {
+		return -1;
+	}
+	return 0;
+}
+
+int fill_buf_with_random_data(unsigned char *buf, int buf_len)
+{
+	int ret;
+
+	if(buf == NULL) {
+		return -1;
+	}
+
+	init_cryptography_env();
+	ret = RAND_status();
+	if(ret != 1) {
+		return -1;
+	}
+
 	ret = RAND_bytes(buf, buf_len);
 	if(ret != 1) {
 		return -1;

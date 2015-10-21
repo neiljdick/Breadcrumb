@@ -21,16 +21,23 @@ int main(int argc, char const *argv[])
 	if(argc != 3) {
 		fprintf(stdout, "Usage: ./%s [USER ID] [PORT]\n", program_name);
 		exit(-1);
-	}	
+	}
+	// TODO refactor into function which performs command line argument veracity check
 	if(strlen(argv[2]) > USER_NAME_MAX_LENGTH) {
 		fprintf(stdout, "Username must be less than %u characters\n", USER_NAME_MAX_LENGTH);
 		exit(-1);
+	}
+	if(strlen(argv[2]) < USER_NAME_MIN_LENGTH) {
+		fprintf(stdout, "Username must be more than %u characters\n", USER_NAME_MIN_LENGTH);
+		exit(-1);	
 	}
 	message_port = (unsigned int)atoi(argv[2]);
 	if(message_port > PORT_MAX) {
 		fprintf(stdout, "[MAIN THREAD] Port number (%u) must be less than %u\n", message_port, PORT_MAX);
 		exit(-5);
 	}
+
+	// TODO refactor into function which performs global variable initialization
 	id_cache_port = message_port + 1;
 	cert_request_port = message_port + 2;
 	memset(user_id, 0, sizeof(user_id));
@@ -86,7 +93,7 @@ int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 
 	#endif
 
-	//check_validity_of_conversation(&convo_valid);
+	//check_validity_of_conversation(&convo_valid); // TODO
 
 	ret = set_entry_relay_for_conversation(ci_out);
 	if(ret < 0) {
@@ -100,15 +107,10 @@ int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 	if(ret < 0) {
 		return -1;
 	}
-
-	#ifdef ENABLE_LOGGING
-		print_conversation("[MAIN THREAD]", ci_out);
-	#endif
-
-/*	ret = perform_user_id_registration(ci_out);
+	ret = perform_user_id_registration(ci_out);
 	if(ret < 0) {
 		return -1;
-	}*/
+	}
 
 	return ret;
 }
@@ -128,7 +130,7 @@ int get_index_of_next_free_conversation(conversation_info *conversations)
 
 int get_relay_public_certificates_debug(conversation_info *ci_info)
 {
-	int i, j, ret, valid_ip;
+	int i, j, ret;
 	unsigned int source_port, initial_seed_value;
 	int cr_socket, bytes_read, tmp;
 	int id_read_success, key_read_success;
@@ -273,9 +275,9 @@ int set_entry_relay_for_conversation(conversation_info *ci_info)
 			break;
 		}
 	}
-	if(i < MINIMUM_NUM_RELAYS) {
+	if(i < MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Unable to register user ID with relays as number of relays (%u) is less than minimum (%u)\n", (i+1), MINIMUM_NUM_RELAYS);
+			fprintf(stdout, "[MAIN THREAD] Unable to register user ID with relays as number of relays (%u) is less than minimum (%u)\n", (i+1), MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER);
 		#endif
 
 		return -1;
@@ -312,7 +314,7 @@ int set_relay_keys_for_conversation(conversation_info *ci_info)
 
 	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
 		if(ci_info->ri_pool[i].is_active) {
-			ret = generate_AES_key(user_id, ci_info->ri_pool[i].aes_key, AES_KEY_SIZE_BYTES);
+			ret = generate_AES_key(ci_info->ri_pool[i].aes_key, AES_KEY_SIZE_BYTES);
 			if(ret < 0) {
 				return -1;
 			}
@@ -360,62 +362,173 @@ int generate_new_user_id(unsigned int *uid /* out */)
 	return 0;
 }
 
-/*
+
 int perform_user_id_registration(conversation_info *ci_info)
 {
 	int ret, i;
-	id_cache_data ic_data;
-	unsigned int first_relay_index;
-	unsigned char ciphertext[RSA_KEY_LENGTH_BYTES];
+	unsigned int seed_val, relay_register_index;
+	unsigned int total_active_relays, total_registered_relays;
+	char index_of_relays_registered[RELAY_POOL_MAX_SIZE];
 
-	if(ri_pool == NULL) {
+	if(ci_info == NULL) {
 		return -1;
 	}
 
-	
-	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "[MAIN THREAD] Generated first relay user id: %u\n", ic_data.relay_user_id);
-	#endif
+	ret = send_packet(REGISTER_USER_ID_WITH_ENTRY_RELAY, ci_info, NULL, NULL, NULL);
+	if(ret < 0) {
+		return -1;				
+	}
 
-	ret = generate_packet(FIRST_RELAY_REGISTER_USER_ID, ri_pool, first_relay_index, packetdata);
-	
+	total_active_relays = total_registered_relays = 0;
+	for (i = 0; i < RELAY_POOL_MAX_SIZE; i++) {
+		if(ci_info->ri_pool[i].is_active == 1) {
+			total_active_relays++;
+		}
+	}
+	memset(index_of_relays_registered, 0, RELAY_POOL_MAX_SIZE);
+	seed_val = (((unsigned int)user_id[2])<<24) | (((unsigned int)user_id[1])<<16) | (((unsigned int)user_id[3])<<8) | ((unsigned int)user_id[0]);
+	while(1) {
+		relay_register_index = get_pseudo_random_number(seed_val);
+		seed_val ^= relay_register_index;
 
-	memcpy(ic_data.aes_key, ri_pool[first_relay_index].aes_key, AES_KEY_SIZE_BYTES);
-	ic_data.relay_user_id = ri_pool[first_relay_index].relay_user_id;
+		relay_register_index %= RELAY_POOL_MAX_SIZE;
+		if(ci_info->ri_pool[relay_register_index].is_active == 1) {
+			if(index_of_relays_registered[relay_register_index] == 0) {
+				ret = send_packet(REGISTER_USER_ID_WITH_RELAY, ci_info, NULL,  NULL, &relay_register_index);
+				if(ret < 0) {
+					return -1;
+				}
 
-	ret = RSA_public_encrypt(sizeof(id_cache_data), (const unsigned char *)&ic_data, ciphertext, ri_pool[first_relay_index].public_cert, RSA_PKCS1_OAEP_PADDING);
-	if(ret != RSA_KEY_LENGTH_BYTES) {
+				index_of_relays_registered[relay_register_index] = 1;
+				total_registered_relays++;
+			}		
+		}
+		if(total_registered_relays == total_active_relays) {
+			break;
+		}
+	}
+
+	return 0;
+}
+
+int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info, char *msg, void *other)
+{
+	int i, ret, bytes_sent;
+	unsigned char packet_buf[PACKET_SIZE_BYTES];
+	id_cache_data ic_data;
+	unsigned int relay_register_index, initial_seed_value;
+	int cr_socket;
+	struct sockaddr_in serv_addr, client_addr;
+	char destination_ip[RELAY_IP_MAX_LENGTH];
+	int source_port, destination_port;
+
+	memset(destination_ip, 0, RELAY_IP_MAX_LENGTH);
+
+	ret = fill_buf_with_random_data(packet_buf, PACKET_SIZE_BYTES);
+	if(ret < 0) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to encrypt id cache data\n");
+			fprintf(stdout, "[MAIN THREAD] Failed to fill packet buffer with random data\n");
 		#endif
 
 		return -1;
 	}
+
+	switch(type) {
+		case REGISTER_USER_ID_WITH_ENTRY_RELAY:
+			if(ci_info == NULL) {
+				return -1;
+			}
+			memcpy(destination_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, RELAY_IP_MAX_LENGTH);
+			destination_port = id_cache_port;
+
+			memcpy(ic_data.aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.relay_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].relay_user_id;
+
+			ret = RSA_public_encrypt(sizeof(id_cache_data), (unsigned char *)&ic_data, packet_buf, ci_info->ri_pool[ci_info->index_of_entry_relay].public_cert, RSA_PKCS1_OAEP_PADDING);
+			if(ret != RSA_KEY_LENGTH_BYTES) {
+				#ifdef ENABLE_LOGGING
+					fprintf(stdout, "[MAIN THREAD] Failed to encrypt id cache data\n");
+				#endif
+
+				return -1;
+			}
+		break;
+		case REGISTER_USER_ID_WITH_RELAY:
+			if((ci_info == NULL) || (other == NULL)){
+				return -1;
+			}
+			relay_register_index = *((unsigned int *)other);
+			if(relay_register_index > RELAY_POOL_MAX_SIZE) {
+				return -1;
+			}
+			memcpy(destination_ip, ci_info->ri_pool[relay_register_index].relay_ip, RELAY_IP_MAX_LENGTH);
+			destination_port = message_port;
+
+			return -1; // TODO - Remove
+
+		break;
+		case DUMMY_PACKET:
+
+		break;
+	}
+
 	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "[MAIN THREAD] Encrypted %u bytes of data\n", ret);
+		fprintf(stdout, "[MAIN THREAD] Sending packet of type: %s to Relay = %s\n", get_packet_type_str(type), destination_ip);
 	#endif
 
-	return 0;
-}
-*/
+	cr_socket = socket(AF_INET, SOCK_STREAM, 0);
+	if(cr_socket < 0){
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[MAIN THREAD] Failed to create stream socket\n");
+		#endif
 
-int is_valid_ip(char *ip, int *valid /* out */)
-{
-	int result;
-	struct sockaddr_in sa;
-
-	if ((ip == NULL) || (valid == NULL)) {
 		return -1;
 	}
 
-    result = inet_pton(AF_INET, ip, &(sa.sin_addr));
-    if(result == 1) {
-    	*valid = 1;
-    } else {
-    	*valid = 0;
-    }
+	// Lets randomize the source port (otherwise linux just increments by 3 each time)
+	bzero((char *) &client_addr, sizeof(client_addr));
+	client_addr.sin_family = AF_INET;
+	for(i = 0; i < NUM_BIND_ATTEMPTS; i++) {
+		initial_seed_value = (((unsigned int)user_id[1])<<24) | (((unsigned int)user_id[3])<<16) | (((unsigned int)user_id[0])<<8) | ((unsigned int)user_id[2]);
+		source_port = get_pseudo_random_number(initial_seed_value);
+		source_port %= 65535;
+		if(source_port < 16384)
+			source_port += 16384;
+		client_addr.sin_port = htons(source_port);
 
-    return -1;
+		ret = bind(cr_socket, (struct sockaddr *) &client_addr, sizeof(client_addr));
+		if(ret == 0)
+			break;
+
+		usleep(100000);
+	}
+
+	bzero((char *) &serv_addr, sizeof(serv_addr));
+	serv_addr.sin_family = AF_INET;
+	serv_addr.sin_port = htons(destination_port);
+	serv_addr.sin_addr.s_addr = inet_addr(destination_ip);
+	ret = connect(cr_socket, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
+	if(ret != 0){
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[MAIN THREAD] Failed to connect to relay with ip = %s\n", destination_ip);
+		#endif
+
+		return -1;
+	}
+
+	bytes_sent = 0;
+	for (i = 0; i < MAX_SEND_ATTEMPTS; i++) {
+		bytes_sent += write(cr_socket, packet_buf, PACKET_SIZE_BYTES);
+		if(bytes_sent == PACKET_SIZE_BYTES) {
+			break;
+		}
+	}
+	close(cr_socket);
+
+	if(bytes_sent != PACKET_SIZE_BYTES) {
+		return -1;
+	}
+	return 0;
 }
 
 int get_friend_id(char *friend_id)
@@ -444,6 +557,25 @@ int get_friend_id(char *friend_id)
 	}
 	
 	return 0;
+}
+
+int is_valid_ip(char *ip, int *valid /* out */)
+{
+	int result;
+	struct sockaddr_in sa;
+
+	if ((ip == NULL) || (valid == NULL)) {
+		return -1;
+	}
+
+    result = inet_pton(AF_INET, ip, &(sa.sin_addr));
+    if(result == 1) {
+    	*valid = 1;
+    } else {
+    	*valid = 0;
+    }
+
+    return -1;
 }
 
 int print_conversation(char *thread_id, conversation_info *ci_info)
@@ -476,4 +608,18 @@ int print_conversation(char *thread_id, conversation_info *ci_info)
 	fprintf(stdout, "%s ------------------------------------\n", thread_id);
 
 	return 0;
+}
+
+char* get_packet_type_str(packet_type type)
+{
+	switch(type) {
+		case REGISTER_USER_ID_WITH_ENTRY_RELAY:
+			return "REGISTER_USER_ID_WITH_ENTRY_RELAY";
+		case REGISTER_USER_ID_WITH_RELAY:
+			return "REGISTER_USER_ID_WITH_RELAY";
+		case DUMMY_PACKET:
+			return "DUMMY_PACKET";
+	}
+
+	return "UNKNOWN";
 }

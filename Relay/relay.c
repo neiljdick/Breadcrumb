@@ -146,7 +146,7 @@ void *certificate_request_handler_thread(void *ptr)
 			fprintf(stdout, "[CERTIFICATE REQUEST THREAD] %s:%d requested certificate\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 		#endif
 
-		write(client_socket, (void *)relay_id, relay_id_len);
+		write(client_socket, (void *)relay_id, relay_id_len); // TODO check all bytes are sent
 		write(client_socket, (void *)public_key_buffer, public_key_buffer_len);
 		fsync(client_socket);
 		close(client_socket);
