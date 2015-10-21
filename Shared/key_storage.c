@@ -92,10 +92,11 @@ int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
 	memcpy(&key_store[user_id], key_in, AES_KEY_SIZE_BYTES);
 
 	#ifdef ENABLE_LOGGING
-		char buf[17];
-		memset(buf, 0, sizeof(buf));
-		memcpy(buf, (*key_in).value, AES_KEY_SIZE_BYTES);
-		fprintf(stdout, "%s Successfully set key = %s for user = %u\n", thread_id, buf, user_id);
+		fprintf(stdout, "%s Successfully set key = ", thread_id);
+		for(i = 0; i < AES_KEY_SIZE_BYTES; i++) {
+			fprintf(stdout, "%02x", (0xff & key_in->value[i]));
+		}
+		fprintf(stdout, " for user = %u\n", user_id);
 	#endif
 
 	return 0;

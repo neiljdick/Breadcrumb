@@ -41,7 +41,7 @@ int main(int argc, char const *argv[])
 		exit(-2);	
 	}
 
-	ret = init_key_store("[MAIN THREAD]");
+	ret = initialize_key_store("[MAIN THREAD]");
 	if(ret < 0) {
 		exit(-2);	
 	}
@@ -104,6 +104,20 @@ int main(int argc, char const *argv[])
 	}
 
 	while(1) sleep(MAIN_THREAD_SLEEP_SEC);
+
+	return 0;
+}
+
+int initialize_key_store(char *thread_id)
+{
+	int ret;
+
+	sem_init(&keystore_sem, 0 , 1);
+
+	ret = init_key_store(thread_id);
+	if(ret < 0) {
+		return -1;
+	}
 
 	return 0;
 }
@@ -503,6 +517,7 @@ void *handle_id_cache_thread(void *ptr)
 	pthread_t self_thread_id;
 	unsigned char packet_data_encrypted[PACKET_SIZE_BYTES], packet_data[PACKET_SIZE_BYTES];
 	id_cache_data *id_data;
+	char buf[64];
 
 	self_thread_id = pthread_self();
 	#ifdef ENABLE_LOGGING
@@ -540,11 +555,16 @@ void *handle_id_cache_thread(void *ptr)
 		fprintf(stdout, "\n");
 	#endif
 
+	sem_wait(&keystore_sem);
+	sprintf(buf, "[ID CACHE CLIENT THREAD 0x%x]", (unsigned int)self_thread_id);
+	set_key_for_user_id(buf, id_data->relay_user_id, (key *)id_data->aes_key);
+	sem_post(&keystore_sem);
+
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "[ID CACHE CLIENT THREAD 0x%x] Client thread exit\n", (unsigned int)self_thread_id);
 	#endif
-	close(client_socket);
 
+	close(client_socket);
 	pthread_ret = (char *)0;
 	pthread_exit(pthread_ret);
 }

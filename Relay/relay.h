@@ -66,6 +66,7 @@ typedef struct thread_pool
 	unsigned int num_active_client_threads;
 } thread_pool;
 
+int initialize_key_store(char *thread_id);
 int init_listening_socket(char *thread_id, unsigned int port, int *listening_socket /* out */);
 int add_new_thread_to_pool(char *thread_id, int thread_pool_index, int client_socket);
 void *certificate_request_handler_thread(void *ptr);
