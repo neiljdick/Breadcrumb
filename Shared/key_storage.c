@@ -9,10 +9,6 @@ unsigned int max_user_id, key_storage_size;
 int init_key_store(char *thread_id)
 {
 	if(key_store != NULL) {
-		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "%s Key storage is already initialized\n", thread_id);
-		#endif
-
 		return -1;
 	}
 

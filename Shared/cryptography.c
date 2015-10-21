@@ -314,7 +314,6 @@ int get_hash_of_string(char *thread_id, int hash_count, const char *in_str, char
 	char tmp_hash[SHA256_DIGEST_LENGTH];
 	SHA256_CTX sha256;
 	int i;
-	char buf[2];
 
 	if((in_str == NULL) || (out_str == NULL)) {
 		return -1;
@@ -340,9 +339,7 @@ int get_hash_of_string(char *thread_id, int hash_count, const char *in_str, char
     SHA256_Final((unsigned char *)tmp_hash, &sha256);
 
     for (i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
-    	sprintf(buf, "%02x", 0xff & tmp_hash[i]);
-    	(*out_str)[(i*2)] = buf[0];
-    	(*out_str)[(i*2)+1] = buf[1];
+    	sprintf(((*out_str) + (i*2)), "%02x", 0xff & tmp_hash[i]);
     }
 
     return 0;

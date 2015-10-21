@@ -38,6 +38,8 @@ char *program_name = "Client";
 
 #define NUM_BIND_ATTEMPTS 				(5)
 
+#define RELAY_ID_LEN 					((SHA256_DIGEST_LENGTH * 2) + 1)
+
 const char *public_cert_dir = ".relay_certs";
 
 typedef struct relay_indexer_info
@@ -54,7 +56,8 @@ typedef struct id_cache_data
 
 typedef struct relay_info
 {
-	char relay_id[(SHA256_DIGEST_LENGTH * 2) + 1];
+	int is_active;
+	char relay_id[RELAY_ID_LEN];
 	char relay_ip[RELAY_IP_MAX_LENGTH];
 	unsigned char aes_key[AES_KEY_SIZE_BYTES];
 	unsigned int relay_user_id;
@@ -66,14 +69,21 @@ typedef struct conversation_info
 	int conversation_valid;
 	char conversation_name[CONVERSATION_NAME_MAX_LENGTH];
 	char friend_name[USER_NAME_MAX_LENGTH];
-	relay_info ri_pool[RELAY_POOL_MAX_SIZE];	
+	int index_of_server_relay;
+	int index_of_entry_relay;
+	relay_info ri_pool[RELAY_POOL_MAX_SIZE];
 } conversation_info;
 
 int get_friend_id(char *friend_id /* out */);
 int init_chat(char *friend_name, conversation_info *ci_out /* out */);
-int get_relay_public_certificates_debug(relay_info *ri_pool);
-int register_user_id_with_active_relays(relay_info *ri_pool);
+int get_relay_public_certificates_debug(conversation_info *ci_info);
+int set_entry_relay_for_conversation(conversation_info *ci_info);
+int set_relay_keys_for_conversation(conversation_info *ci_info);
+int set_user_ids_for_conversation(conversation_info *ci_info);
+int perform_user_id_registration(conversation_info *ci_info);
 int get_index_of_next_free_conversation(conversation_info *conversations);
+int generate_new_user_id(unsigned int *uid /* out */);
 int is_valid_ip(char *ip, int *valid /* out */);
+int print_conversation(char *thread_id, conversation_info *ci_info);
 
 #endif
