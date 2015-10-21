@@ -21,6 +21,7 @@
 
 #include "../Shared/key_storage.h"
 #include "../Shared/cryptography.h"
+#include "../Shared/packet_definition.h"
 
 char *program_name = "Client";
 
@@ -39,7 +40,6 @@ char *program_name = "Client";
 #define RELAY_ID_LEN 							((SHA256_DIGEST_LENGTH * 2) + 1)
 
 #define MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER 	(2)
-#define PACKET_SIZE_BYTES						(512)
 #define MAX_ROUTE_LENGTH 						(3)
 
 const char *public_cert_dir = ".relay_certs";
@@ -55,12 +55,6 @@ typedef struct relay_indexer_info
 	char *ip_address;
 	RSA *public_cert;
 } relay_indexer_info;
-
-typedef struct id_cache_data
-{
-	char aes_key[AES_KEY_SIZE_BYTES];
-	unsigned int relay_user_id;
-} id_cache_data;
 
 typedef struct relay_info
 {

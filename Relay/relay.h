@@ -14,6 +14,10 @@
 #include <arpa/inet.h>
 #include <semaphore.h>
 
+#include "../Shared/key_storage.h"
+#include "../Shared/cryptography.h"
+#include "../Shared/packet_definition.h"
+
 const char *program_name = "Relay";
 
 const char *msg_handler_str 		= "MSG HANDLER";
@@ -41,10 +45,13 @@ const char *unknown_str 			= "UNKNOWN";
 #define CERT_REQUEST_SLEEP_US 			(50000)
 #define ID_CACHE_SLEEP_US 				(50000)
 
+#define NUM_READ_ATTEMPTS 				(5)
+
 typedef struct client_thread_description
 {
 	pthread_t thread_id;
 	int thread_age;
+	int thread_fd;
 	struct client_thread_description *next;
 } client_thread_description;
 

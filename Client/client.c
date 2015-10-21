@@ -107,6 +107,11 @@ int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 	if(ret < 0) {
 		return -1;
 	}
+
+	#ifdef ENABLE_LOGGING
+		print_conversation("[MAIN THREAD]", ci_out);
+	#endif
+
 	ret = perform_user_id_registration(ci_out);
 	if(ret < 0) {
 		return -1;
@@ -518,7 +523,7 @@ int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info
 
 	bytes_sent = 0;
 	for (i = 0; i < MAX_SEND_ATTEMPTS; i++) {
-		bytes_sent += write(cr_socket, packet_buf, PACKET_SIZE_BYTES);
+		bytes_sent += write(cr_socket, (packet_buf + bytes_sent), (PACKET_SIZE_BYTES - bytes_sent));
 		if(bytes_sent == PACKET_SIZE_BYTES) {
 			break;
 		}

@@ -1,8 +1,8 @@
 #include "relay.h"
-#include "../Shared/key_storage.h"
-#include "../Shared/cryptography.h"
 
 #define ENABLE_LOGGING
+
+sem_t keystore_sem;
 
 thread_pool thread_pools[NUM_THREAD_POOLS];
 client_thread_description msg_client_pool[NUM_MSG_HANDLER_THREADS];
@@ -267,6 +267,7 @@ int add_new_thread_to_pool(char *thread_id, int thread_pool_index, int client_so
 {
 	int ret, errno_cached;
 	int unused_thread_index;
+	void *thread_arg;
 
 	if(client_socket < 0) {
 		return -1;
@@ -294,8 +295,10 @@ int add_new_thread_to_pool(char *thread_id, int thread_pool_index, int client_so
 		sem_post(&(thread_pools[thread_pool_index].ct_pool_sem));
 		return -1;
 	}
+	thread_pools[thread_pool_index].cthread_pool[unused_thread_index].thread_fd = client_socket;
+	thread_arg = (void *)&(thread_pools[thread_pool_index].cthread_pool[unused_thread_index].thread_fd);
 
-	ret = pthread_create(&(thread_pools[thread_pool_index].cthread_pool[unused_thread_index].thread_id), NULL, thread_pools[thread_pool_index].start_routine, &client_socket);
+	ret = pthread_create(&(thread_pools[thread_pool_index].cthread_pool[unused_thread_index].thread_id), NULL, thread_pools[thread_pool_index].start_routine, thread_arg);
 	if(ret != 0) {
 		errno_cached = errno;
 		#ifdef ENABLE_LOGGING
@@ -340,7 +343,7 @@ int initialize_thread_pools()
 	thread_pools[MSG_THREAD_POOL_INDEX].thread_pool_max_age = MSG_HANDLER_THREAD_MAX_AGE;
 	thread_pools[USER_ID_CACHE_POOL_INDEX].thread_pool_max_age = USER_ID_CACHE_THREAD_MAX_AGE;
 
-	thread_pools[MSG_THREAD_POOL_INDEX].cthread_pool = msg_client_pool; 
+	thread_pools[MSG_THREAD_POOL_INDEX].cthread_pool = msg_client_pool;
 	thread_pools[USER_ID_CACHE_POOL_INDEX].cthread_pool = user_id_cache_pool;
 
 	thread_pools[MSG_THREAD_POOL_INDEX].first_ct = NULL;
@@ -494,9 +497,12 @@ void *handle_msg_client_thread(void *ptr)
 
 void *handle_id_cache_thread(void *ptr)
 {
+	int i, bytes_read;
 	int client_socket;
 	char *pthread_ret;
 	pthread_t self_thread_id;
+	unsigned char packet_data_encrypted[PACKET_SIZE_BYTES], packet_data[PACKET_SIZE_BYTES];
+	id_cache_data *id_data;
 
 	self_thread_id = pthread_self();
 	#ifdef ENABLE_LOGGING
@@ -511,9 +517,28 @@ void *handle_id_cache_thread(void *ptr)
 		pthread_ret = (char *)-1;
 		pthread_exit(pthread_ret);
 	}
-	client_socket = *((int *)ptr);	
+	client_socket = *((int *)ptr);
 
-	sleep(15);
+	bytes_read = 0;
+	for(i = 0; i < NUM_READ_ATTEMPTS; i++) {
+		bytes_read += read(client_socket, (packet_data_encrypted + bytes_read), (PACKET_SIZE_BYTES - bytes_read));
+		if(bytes_read < 0)
+			break;
+	}
+	if(bytes_read != PACKET_SIZE_BYTES) {
+		pthread_ret = (char *)0;
+		pthread_exit(pthread_ret);
+	}
+	
+	RSA_private_decrypt(RSA_KEY_LENGTH_BYTES, packet_data_encrypted, packet_data, rsa, RSA_PKCS1_OAEP_PADDING);
+	id_data = ((id_cache_data *)packet_data);
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "[ID CACHE CLIENT THREAD 0x%x] Received id cache data, user id = %d, key = ", (unsigned int)self_thread_id, (unsigned int)id_data->relay_user_id);
+		for(i = 0; i < AES_KEY_SIZE_BYTES; i++) {
+			fprintf(stdout, "%02x", (0xff & id_data->aes_key[i]));
+		}
+		fprintf(stdout, "\n");
+	#endif
 
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "[ID CACHE CLIENT THREAD 0x%x] Client thread exit\n", (unsigned int)self_thread_id);
