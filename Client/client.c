@@ -418,18 +418,40 @@ int perform_user_id_registration(conversation_info *ci_info)
 
 int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info, char *msg, void *other)
 {
-	int i, ret, bytes_sent;
+	int ret;
 	unsigned char packet_buf[PACKET_SIZE_BYTES];
-	id_cache_data ic_data;
-	unsigned int relay_register_index, initial_seed_value;
-	int cr_socket;
-	struct sockaddr_in serv_addr, client_addr;
 	char destination_ip[RELAY_IP_MAX_LENGTH];
-	int source_port, destination_port;
+	int destination_port;
+
+	ret = create_packet(type, ci_info, r_info, msg, other, packet_buf, destination_ip, &destination_port);
+	if(ret < 0) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[MAIN THREAD] Failed to create packet\n");
+		#endif
+
+		return -1;
+	}
+
+	ret = send_packet_to_relay(packet_buf, destination_ip, destination_port);
+	if(ret < 0) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[MAIN THREAD] Failed to send packet to relay, ip = %s\n", destination_ip);
+		#endif
+
+		return -1;
+	}
+
+	return 0;
+}
+
+int create_packet(packet_type type, conversation_info *ci_info, route_info *r_info, char *msg, void *other, unsigned char *packet, char *destination_ip, int *destination_port)
+{
+	int ret;
+	id_cache_data ic_data;
+	unsigned int relay_register_index;
 
 	memset(destination_ip, 0, RELAY_IP_MAX_LENGTH);
-
-	ret = fill_buf_with_random_data(packet_buf, PACKET_SIZE_BYTES);
+	ret = fill_buf_with_random_data(packet, PACKET_SIZE_BYTES);
 	if(ret < 0) {
 		#ifdef ENABLE_LOGGING
 			fprintf(stdout, "[MAIN THREAD] Failed to fill packet buffer with random data\n");
@@ -444,12 +466,12 @@ int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info
 				return -1;
 			}
 			memcpy(destination_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, RELAY_IP_MAX_LENGTH);
-			destination_port = id_cache_port;
+			*destination_port = id_cache_port;
 
 			memcpy(ic_data.aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].aes_key, AES_KEY_SIZE_BYTES);
 			ic_data.relay_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].relay_user_id;
 
-			ret = RSA_public_encrypt(sizeof(id_cache_data), (unsigned char *)&ic_data, packet_buf, ci_info->ri_pool[ci_info->index_of_entry_relay].public_cert, RSA_PKCS1_OAEP_PADDING);
+			ret = RSA_public_encrypt(sizeof(id_cache_data), (unsigned char *)&ic_data, packet, ci_info->ri_pool[ci_info->index_of_entry_relay].public_cert, RSA_PKCS1_OAEP_PADDING);
 			if(ret != RSA_KEY_LENGTH_BYTES) {
 				#ifdef ENABLE_LOGGING
 					fprintf(stdout, "[MAIN THREAD] Failed to encrypt id cache data\n");
@@ -467,7 +489,7 @@ int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info
 				return -1;
 			}
 			memcpy(destination_ip, ci_info->ri_pool[relay_register_index].relay_ip, RELAY_IP_MAX_LENGTH);
-			destination_port = message_port;
+			*destination_port = message_port;
 
 			return -1; // TODO - Remove
 
@@ -476,10 +498,19 @@ int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info
 
 		break;
 	}
-
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "[MAIN THREAD] Sending packet of type: %s to Relay = %s\n", get_packet_type_str(type), destination_ip);
 	#endif
+
+	return 0;
+}
+
+int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destination_port)
+{
+	int i, ret, bytes_sent;
+	int source_port, cr_socket;
+	struct sockaddr_in serv_addr, client_addr;
+	unsigned int initial_seed_value;
 
 	cr_socket = socket(AF_INET, SOCK_STREAM, 0);
 	if(cr_socket < 0){
@@ -523,7 +554,7 @@ int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info
 
 	bytes_sent = 0;
 	for (i = 0; i < MAX_SEND_ATTEMPTS; i++) {
-		bytes_sent += write(cr_socket, (packet_buf + bytes_sent), (PACKET_SIZE_BYTES - bytes_sent));
+		bytes_sent += write(cr_socket, (packet + bytes_sent), (PACKET_SIZE_BYTES - bytes_sent));
 		if(bytes_sent == PACKET_SIZE_BYTES) {
 			break;
 		}

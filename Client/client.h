@@ -40,7 +40,6 @@ char *program_name = "Client";
 #define RELAY_ID_LEN 							((SHA256_DIGEST_LENGTH * 2) + 1)
 
 #define MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER 	(2)
-#define MAX_ROUTE_LENGTH 						(3)
 
 const char *public_cert_dir = ".relay_certs";
 
@@ -91,6 +90,8 @@ int set_user_ids_for_conversation(conversation_info *ci_info);
 int perform_user_id_registration(conversation_info *ci_info);
 int get_index_of_next_free_conversation(conversation_info *conversations);
 int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info, char *msg, void *other);
+int create_packet(packet_type type, conversation_info *ci_info, route_info *r_info, char *msg, void *other, unsigned char *packet, char *destination_ip, int *destination_port);
+int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destination_port);
 int generate_new_user_id(unsigned int *uid /* out */);
 int is_valid_ip(char *ip, int *valid /* out */);
 int print_conversation(char *thread_id, conversation_info *ci_info);
