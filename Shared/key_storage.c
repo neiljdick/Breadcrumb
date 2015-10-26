@@ -83,13 +83,17 @@ int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
 	for (i = 0; i < sizeof(key); i++) {
 		if(key_store[user_id].value[i] != 0) {
 			#ifdef ENABLE_LOGGING
-				fprintf(stdout, "%s Failed to set key, key slot %u is not empty (value = %s)\n", thread_id, user_id, (*key_in).value);
+				fprintf(stdout, "%s Failed to set key, key slot %u is not empty, key = ", thread_id, user_id);
+				for(i = 0; i < AES_KEY_SIZE_BYTES; i++) {
+					fprintf(stdout, "%02x", (0xff & key_in->value[i]));
+				}
+				fprintf(stdout, "\n");
 			#endif
 
 			return -1;
 		}
 	}
-	memcpy(&key_store[user_id], key_in, AES_KEY_SIZE_BYTES);
+	memcpy(&key_store[user_id], key_in->value, AES_KEY_SIZE_BYTES);
 
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "%s Successfully set key = ", thread_id);
@@ -104,6 +108,8 @@ int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
 
 int get_key_for_user_id(char *thread_id, unsigned int user_id, key *key_out /* out */)
 {
+	int i;
+
 	if((key_out == NULL) || (key_store == NULL)) {
 		return -1;
 	}
@@ -117,11 +123,24 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, key *key_out /* o
 	}
 	memcpy(key_out, &key_store[user_id], AES_KEY_SIZE_BYTES);
 
+	for (i = 0; i < AES_KEY_SIZE_BYTES; i++) {
+		if(key_store[user_id].value[i] != 0)
+			break;
+	}
+	if(i == AES_KEY_SIZE_BYTES) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Failed to get key, key for user ID (%u) is empty\n", thread_id, user_id);
+		#endif
+
+		return -1;
+	}
+
 	#ifdef ENABLE_LOGGING
-		char buf[17];
-		memset(buf, 0, sizeof(buf));
-		memcpy(buf, (*key_out).value, AES_KEY_SIZE_BYTES);
-		fprintf(stdout, "%s Successfully got key = %s for user = %u\n", thread_id, buf, user_id);
+		fprintf(stdout, "%s Successfully got key = ", thread_id);
+		for(i = 0; i < AES_KEY_SIZE_BYTES; i++) {
+			fprintf(stdout, "%02x", (0xff & key_out->value[i]));
+		}
+		fprintf(stdout, " for user = %u\n", user_id);
 	#endif
 
 	return 0;

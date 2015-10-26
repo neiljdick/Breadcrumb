@@ -2,10 +2,14 @@
 
 #define ENABLE_LOGGING
 #define DEBUG_MODE
+//#define PRINT_PACKETS
 
 #ifdef DEBUG_MODE
 	static int debug_convo_count = 0;
 #endif
+
+sem_t sp_node_sem;
+send_packet_node *sp_node;
 
 unsigned char user_id[USER_NAME_MAX_LENGTH];
 int index_of_active_conversation;
@@ -15,8 +19,10 @@ int message_port, id_cache_port, cert_request_port;
 
 int main(int argc, char const *argv[])
 {
+	int ret;
 	int free_convo_index;
 	char friend_id[USER_NAME_MAX_LENGTH];
+	pthread_t send_packet_thread;
 
 	if(argc != 3) {
 		fprintf(stdout, "Usage: ./%s [USER ID] [PORT]\n", program_name);
@@ -37,6 +43,19 @@ int main(int argc, char const *argv[])
 		exit(-5);
 	}
 
+	ret = init_send_packet_node();
+	if(ret < 0) {
+		exit(-2);	
+	}
+	ret = init_send_packet_thread(&send_packet_thread);
+	if(ret < 0) {
+		exit(-2);	
+	}
+	ret = initialize_packet_definitions("[MAIN THREAD]");
+	if(ret < 0) {
+		exit(-2);	
+	}
+
 	// TODO refactor into function which performs global variable initialization
 	id_cache_port = message_port + 1;
 	cert_request_port = message_port + 2;
@@ -52,6 +71,134 @@ int main(int argc, char const *argv[])
 	}
 	init_chat(friend_id, &(conversations[free_convo_index]));
 
+	while(1) sleep(MAIN_THREAD_SLEEP_TIME); // TODO this is just a placeholder
+
+	return 0;
+}
+
+int init_send_packet_node(void)
+{
+	sem_init(&sp_node_sem, 0, 1);
+	sp_node = NULL;
+
+	return 0;
+}
+
+int init_send_packet_thread(pthread_t *send_packet_thread)
+{
+	int ret, errno_cached;
+
+	if(send_packet_thread == NULL) {
+		return -1;
+	}
+
+	ret = pthread_create(send_packet_thread, NULL, send_packet_handler, NULL);
+	if(ret != 0) {
+		errno_cached = errno;
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[MAIN THREAD] Failed to create send packet thread, %s\n", strerror(errno_cached));
+		#endif
+
+		return -1;
+	}
+
+	return 0;
+}
+
+void *send_packet_handler(void *ptr)
+{
+	int ret;
+	send_packet_node *sp_node_to_free;
+
+	while(1) {
+		sleep(PACKET_TRANSMISSION_DELAY);
+
+		if(sp_node == NULL) { // TODO - send dummy packet
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "-");
+				fflush(stdout);
+			#endif
+		} else {
+			sem_wait(&sp_node_sem);
+
+			ret = send_packet_to_relay(sp_node->packet_buf, sp_node->destination_ip, sp_node->destination_port);
+			if(ret < 0) {
+				#ifdef ENABLE_LOGGING
+					fprintf(stdout, "[SEND PACKET THREAD] Failed to send packet to relay, ip = %s\n", sp_node->destination_ip);
+				#endif
+			}
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, ".");
+				fflush(stdout);
+			#endif
+
+			sp_node_to_free = sp_node;
+			sp_node = sp_node->next;
+			free(sp_node_to_free);
+			sem_post(&sp_node_sem);
+		}
+	}
+}
+
+int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destination_port)
+{
+	int i, ret, bytes_sent;
+	int source_port, cr_socket;
+	struct sockaddr_in serv_addr, client_addr;
+	unsigned int initial_seed_value;
+
+	cr_socket = socket(AF_INET, SOCK_STREAM, 0);
+	if(cr_socket < 0){
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[MAIN THREAD] Failed to create stream socket\n");
+		#endif
+
+		return -1;
+	}
+
+	// Lets randomize the source port (otherwise linux just increments by 3 each time)
+	bzero((char *) &client_addr, sizeof(client_addr));
+	client_addr.sin_family = AF_INET;
+	for(i = 0; i < NUM_BIND_ATTEMPTS; i++) {
+		initial_seed_value = (((unsigned int)user_id[1])<<24) | (((unsigned int)user_id[3])<<16) | (((unsigned int)user_id[0])<<8) | ((unsigned int)user_id[2]);
+		source_port = get_pseudo_random_number(initial_seed_value);
+		source_port %= 65535;
+		if(source_port < 16384)
+			source_port += 16384;
+		client_addr.sin_port = htons(source_port);
+
+		ret = bind(cr_socket, (struct sockaddr *) &client_addr, sizeof(client_addr));
+		if(ret == 0)
+			break;
+
+		usleep(100000);
+	}
+
+	bzero((char *) &serv_addr, sizeof(serv_addr));
+	serv_addr.sin_family = AF_INET;
+	serv_addr.sin_port = htons(destination_port);
+	serv_addr.sin_addr.s_addr = inet_addr(destination_ip);
+	ret = connect(cr_socket, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
+	if(ret != 0){
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[MAIN THREAD] Failed to connect to relay with ip = %s\n", destination_ip);
+		#endif
+
+		return -1;
+	}
+
+	bytes_sent = 0;
+	for (i = 0; i < MAX_SEND_ATTEMPTS; i++) {
+		bytes_sent += write(cr_socket, (packet + bytes_sent), (PACKET_SIZE_BYTES - bytes_sent));
+		if(bytes_sent == PACKET_SIZE_BYTES) {
+			break;
+		}
+	}
+	close(cr_socket);
+
+	if(bytes_sent != PACKET_SIZE_BYTES) {
+		return -1;
+	}
 	return 0;
 }
 
@@ -323,6 +470,10 @@ int set_relay_keys_for_conversation(conversation_info *ci_info)
 			if(ret < 0) {
 				return -1;
 			}
+			ret = generate_AES_key(ci_info->ri_pool[i].payload_aes_key, AES_KEY_SIZE_BYTES);
+			if(ret < 0) {
+				return -1;
+			}
 		}
 	}
 
@@ -340,6 +491,7 @@ int set_user_ids_for_conversation(conversation_info *ci_info)
 	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
 		if(ci_info->ri_pool[i].is_active) {
 			generate_new_user_id(&(ci_info->ri_pool[i].relay_user_id));
+			generate_new_user_id(&(ci_info->ri_pool[i].payload_relay_user_id));
 		}
 	}
 
@@ -367,7 +519,6 @@ int generate_new_user_id(unsigned int *uid /* out */)
 	return 0;
 }
 
-
 int perform_user_id_registration(conversation_info *ci_info)
 {
 	int ret, i;
@@ -383,10 +534,14 @@ int perform_user_id_registration(conversation_info *ci_info)
 	if(ret < 0) {
 		return -1;				
 	}
+	ret = send_packet(REGISTER_PAYLOAD_USER_ID_WITH_ENTRY_RELAY, ci_info, NULL, NULL, NULL);
+	if(ret < 0) {
+		return -1;
+	}
 
 	total_active_relays = total_registered_relays = 0;
 	for (i = 0; i < RELAY_POOL_MAX_SIZE; i++) {
-		if(ci_info->ri_pool[i].is_active == 1) {
+		if((ci_info->ri_pool[i].is_active == 1) && (i != ci_info->index_of_entry_relay)) {
 			total_active_relays++;
 		}
 	}
@@ -397,18 +552,26 @@ int perform_user_id_registration(conversation_info *ci_info)
 		seed_val ^= relay_register_index;
 
 		relay_register_index %= RELAY_POOL_MAX_SIZE;
-		if(ci_info->ri_pool[relay_register_index].is_active == 1) {
+		if((ci_info->ri_pool[relay_register_index].is_active == 1) && (relay_register_index != ci_info->index_of_entry_relay)) {
 			if(index_of_relays_registered[relay_register_index] == 0) {
 				ret = send_packet(REGISTER_USER_ID_WITH_RELAY, ci_info, NULL,  NULL, &relay_register_index);
 				if(ret < 0) {
 					return -1;
 				}
 
-				index_of_relays_registered[relay_register_index] = 1;
+				index_of_relays_registered[relay_register_index]++;
+				total_registered_relays++;
+			} else if(index_of_relays_registered[relay_register_index] == 1) {
+				ret = send_packet(REGISTER_PAYLOAD_USER_ID_WITH_RELAY, ci_info, NULL,  NULL, &relay_register_index);
+				if(ret < 0) {
+					return -1;
+				}
+
+				index_of_relays_registered[relay_register_index]++;
 				total_registered_relays++;
 			}		
 		}
-		if(total_registered_relays == total_active_relays) {
+		if(total_registered_relays == (total_active_relays*2)) {
 			break;
 		}
 	}
@@ -426,16 +589,24 @@ int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info
 	ret = create_packet(type, ci_info, r_info, msg, other, packet_buf, destination_ip, &destination_port);
 	if(ret < 0) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to create packet\n");
+			fprintf(stdout, "[MAIN THREAD] Failed to create packet, type = %s\n", get_packet_type_str(type));
 		#endif
 
 		return -1;
 	}
+	#ifdef PRINT_PACKETS
+		int i;
+		fprintf(stdout, "\n ------------------------------------------------------------ \n");
+		for (i = 0; i < PACKET_SIZE_BYTES; i++) {
+			fprintf(stdout, "%02x", packet_buf[i]);
+		}
+		fprintf(stdout, "\n\n ------------------------------------------------------------ \n");
+	#endif
 
-	ret = send_packet_to_relay(packet_buf, destination_ip, destination_port);
+	ret = place_packet_on_send_queue(packet_buf, destination_ip, destination_port);
 	if(ret < 0) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to send packet to relay, ip = %s\n", destination_ip);
+			fprintf(stdout, "[MAIN THREAD] Failed to place packet on send queue\n");
 		#endif
 
 		return -1;
@@ -449,8 +620,14 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 	int ret;
 	id_cache_data ic_data;
 	unsigned int relay_register_index;
+	onion_route_data or_data[3];
+	onion_route_data or_payload_data[3];
+	unsigned char encrypt_buffer[PACKET_SIZE_BYTES];
 
 	memset(destination_ip, 0, RELAY_IP_MAX_LENGTH);
+	memset(or_data, 0, sizeof(or_data));
+	memset(or_payload_data, 0, sizeof(or_payload_data));
+
 	ret = fill_buf_with_random_data(packet, PACKET_SIZE_BYTES);
 	if(ret < 0) {
 		#ifdef ENABLE_LOGGING
@@ -462,16 +639,22 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 
 	switch(type) {
 		case REGISTER_USER_ID_WITH_ENTRY_RELAY:
+		case REGISTER_PAYLOAD_USER_ID_WITH_ENTRY_RELAY:
 			if(ci_info == NULL) {
 				return -1;
 			}
 			memcpy(destination_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, RELAY_IP_MAX_LENGTH);
 			*destination_port = id_cache_port;
 
-			memcpy(ic_data.aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].aes_key, AES_KEY_SIZE_BYTES);
-			ic_data.relay_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].relay_user_id;
-
-			ret = RSA_public_encrypt(sizeof(id_cache_data), (unsigned char *)&ic_data, packet, ci_info->ri_pool[ci_info->index_of_entry_relay].public_cert, RSA_PKCS1_OAEP_PADDING);
+			if(type == REGISTER_USER_ID_WITH_ENTRY_RELAY) {
+				memcpy(ic_data.aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].aes_key, AES_KEY_SIZE_BYTES);
+				ic_data.relay_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].relay_user_id;	
+			} else {
+				memcpy(ic_data.aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].payload_aes_key, AES_KEY_SIZE_BYTES);
+				ic_data.relay_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].payload_relay_user_id;
+			}
+			
+			ret = RSA_public_encrypt(sizeof(id_cache_data), (unsigned char *)&ic_data, (packet + payload_start_byte), ci_info->ri_pool[ci_info->index_of_entry_relay].public_cert, RSA_PKCS1_OAEP_PADDING);
 			if(ret != RSA_KEY_LENGTH_BYTES) {
 				#ifdef ENABLE_LOGGING
 					fprintf(stdout, "[MAIN THREAD] Failed to encrypt id cache data\n");
@@ -479,8 +662,12 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 
 				return -1;
 			}
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "[MAIN THREAD] %s with relay = %s\n", get_packet_type_str(type), destination_ip);
+			#endif
 		break;
 		case REGISTER_USER_ID_WITH_RELAY:
+		case REGISTER_PAYLOAD_USER_ID_WITH_RELAY:
 			if((ci_info == NULL) || (other == NULL)){
 				return -1;
 			}
@@ -488,82 +675,108 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 			if(relay_register_index > RELAY_POOL_MAX_SIZE) {
 				return -1;
 			}
-			memcpy(destination_ip, ci_info->ri_pool[relay_register_index].relay_ip, RELAY_IP_MAX_LENGTH);
+			memcpy(destination_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, RELAY_IP_MAX_LENGTH);
 			*destination_port = message_port;
 
-			return -1; // TODO - Remove
+			generate_AES_key((unsigned char *)or_data[0].iv, AES_KEY_SIZE_BYTES);
+			or_data[0].uid = ci_info->ri_pool[ci_info->index_of_entry_relay].relay_user_id;
+			generate_new_user_id(&(or_data[0].ord_enc.new_uid));
+			generate_AES_key((unsigned char *)or_data[0].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+			inet_aton(ci_info->ri_pool[relay_register_index].relay_ip, (struct in_addr *)&(or_data[0].ord_enc.next_pkg_ip));
+			or_data[0].ord_enc.next_pkg_port = id_cache_port;
+
+			ret = aes_encrypt_block("[MAIN THREAD]", (unsigned char *)&(or_data[0].ord_enc), sizeof(onion_route_data_encrypted), 
+										ci_info->ri_pool[ci_info->index_of_entry_relay].aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[0].iv), (packet + cipher_text_byte_offset));
+			if(ret < 0) {
+				return -1;
+			}
+			memcpy(packet, &(or_data[0]), cipher_text_byte_offset);
+
+			generate_AES_key((unsigned char *)or_payload_data[0].iv, AES_KEY_SIZE_BYTES);
+			or_payload_data[0].uid = ci_info->ri_pool[ci_info->index_of_entry_relay].payload_relay_user_id;
+			generate_new_user_id(&(or_payload_data[0].ord_enc.new_uid));
+			generate_AES_key((unsigned char *)or_payload_data[0].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+
+			memcpy(encrypt_buffer, &(or_payload_data[0]), sizeof(onion_route_data));
+			if(type == REGISTER_USER_ID_WITH_RELAY) {
+				memcpy(ic_data.aes_key, ci_info->ri_pool[relay_register_index].aes_key, AES_KEY_SIZE_BYTES);
+				ic_data.relay_user_id = ci_info->ri_pool[relay_register_index].relay_user_id;	
+			} else {
+				memcpy(ic_data.aes_key, ci_info->ri_pool[relay_register_index].payload_aes_key, AES_KEY_SIZE_BYTES);
+				ic_data.relay_user_id = ci_info->ri_pool[relay_register_index].payload_relay_user_id;
+			}
+			
+			ret = RSA_public_encrypt(sizeof(id_cache_data), (unsigned char *)&ic_data, (encrypt_buffer + (sizeof(onion_route_data))), 
+										ci_info->ri_pool[relay_register_index].public_cert, RSA_PKCS1_OAEP_PADDING);
+			if(ret != RSA_KEY_LENGTH_BYTES) {
+				#ifdef ENABLE_LOGGING
+					fprintf(stdout, "[MAIN THREAD] Failed to encrypt id cache data\n");
+				#endif
+
+				return -1;
+			}
+
+			memcpy((packet + payload_start_byte), &or_payload_data[0], cipher_text_byte_offset);
+			ret = aes_encrypt_block("[MAIN THREAD]", encrypt_buffer + cipher_text_byte_offset, (sizeof(onion_route_data_encrypted) + RSA_KEY_LENGTH_BYTES), 
+										ci_info->ri_pool[ci_info->index_of_entry_relay].payload_aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_payload_data[0].iv), 
+											(packet + payload_start_byte + cipher_text_byte_offset));
+			if(ret < 0) {
+				return -1;
+			}
+
+			ci_info->ri_pool[ci_info->index_of_entry_relay].relay_user_id = or_data[0].ord_enc.new_uid;
+			memcpy(ci_info->ri_pool[ci_info->index_of_entry_relay].aes_key, or_data[0].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+			ci_info->ri_pool[ci_info->index_of_entry_relay].payload_relay_user_id = or_payload_data[0].ord_enc.new_uid;
+			memcpy(ci_info->ri_pool[ci_info->index_of_entry_relay].payload_aes_key, or_payload_data[0].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "[MAIN THREAD] %s with relay = %s, via relay = %s, Relay UID = %u, Payload UID = %u\n", 
+						get_packet_type_str(type), ci_info->ri_pool[relay_register_index].relay_ip, destination_ip, or_data[0].uid, or_payload_data[0].uid);
+			#endif
 
 		break;
 		case DUMMY_PACKET:
 
 		break;
 	}
-	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "[MAIN THREAD] Sending packet of type: %s to Relay = %s\n", get_packet_type_str(type), destination_ip);
-	#endif
 
 	return 0;
 }
 
-int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destination_port)
+int place_packet_on_send_queue(unsigned char *packet, char *destination_ip, int destination_port)
 {
-	int i, ret, bytes_sent;
-	int source_port, cr_socket;
-	struct sockaddr_in serv_addr, client_addr;
-	unsigned int initial_seed_value;
+	send_packet_node *sp, *sp_tmp;
 
-	cr_socket = socket(AF_INET, SOCK_STREAM, 0);
-	if(cr_socket < 0){
+	if((packet == NULL) || (destination_ip == NULL)) {
+		return -1;
+	}
+
+	sem_wait(&sp_node_sem);
+	
+	sp_tmp = calloc(1, sizeof(send_packet_node));
+	if(sp_tmp == NULL) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to create stream socket\n");
+			fprintf(stdout, "[MAIN THREAD] Failed to allocate memory on packet send queue\n");
 		#endif
 
 		return -1;
 	}
+	memcpy(sp_tmp->packet_buf, packet, PACKET_SIZE_BYTES);
+	memcpy(sp_tmp->destination_ip, destination_ip, RELAY_IP_MAX_LENGTH);
+	sp_tmp->destination_port = destination_port;
 
-	// Lets randomize the source port (otherwise linux just increments by 3 each time)
-	bzero((char *) &client_addr, sizeof(client_addr));
-	client_addr.sin_family = AF_INET;
-	for(i = 0; i < NUM_BIND_ATTEMPTS; i++) {
-		initial_seed_value = (((unsigned int)user_id[1])<<24) | (((unsigned int)user_id[3])<<16) | (((unsigned int)user_id[0])<<8) | ((unsigned int)user_id[2]);
-		source_port = get_pseudo_random_number(initial_seed_value);
-		source_port %= 65535;
-		if(source_port < 16384)
-			source_port += 16384;
-		client_addr.sin_port = htons(source_port);
-
-		ret = bind(cr_socket, (struct sockaddr *) &client_addr, sizeof(client_addr));
-		if(ret == 0)
-			break;
-
-		usleep(100000);
-	}
-
-	bzero((char *) &serv_addr, sizeof(serv_addr));
-	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons(destination_port);
-	serv_addr.sin_addr.s_addr = inet_addr(destination_ip);
-	ret = connect(cr_socket, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
-	if(ret != 0){
-		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to connect to relay with ip = %s\n", destination_ip);
-		#endif
-
-		return -1;
-	}
-
-	bytes_sent = 0;
-	for (i = 0; i < MAX_SEND_ATTEMPTS; i++) {
-		bytes_sent += write(cr_socket, (packet + bytes_sent), (PACKET_SIZE_BYTES - bytes_sent));
-		if(bytes_sent == PACKET_SIZE_BYTES) {
-			break;
+	if(sp_node == NULL) {
+		sp_node = sp_tmp;
+	} else {
+		sp = sp_node;
+		while(sp->next != NULL) {
+			sp = sp->next;
 		}
+		sp->next = sp_tmp;
 	}
-	close(cr_socket);
 
-	if(bytes_sent != PACKET_SIZE_BYTES) {
-		return -1;
-	}
+	sem_post(&sp_node_sem);
+
 	return 0;
 }
 
@@ -639,6 +852,11 @@ int print_conversation(char *thread_id, conversation_info *ci_info)
 			}
 			fprintf(stdout, "%s Relay Key = %s\n", thread_id, buf);
 			fprintf(stdout, "%s Relay User ID = %u\n", thread_id, ci_info->ri_pool[i].relay_user_id);
+			for (j = 0; j < AES_KEY_SIZE_BYTES; j++) {
+				sprintf((buf + (j*2)), "%02x", 0xff & ci_info->ri_pool[i].payload_aes_key[j]);
+			}
+			fprintf(stdout, "%s Payload Relay Key = %s\n", thread_id, buf);
+			fprintf(stdout, "%s Payload Relay User ID = %u\n", thread_id, ci_info->ri_pool[i].payload_relay_user_id);
 		}
 	}
 	fprintf(stdout, "%s ------------------------------------\n", thread_id);
@@ -651,8 +869,12 @@ char* get_packet_type_str(packet_type type)
 	switch(type) {
 		case REGISTER_USER_ID_WITH_ENTRY_RELAY:
 			return "REGISTER_USER_ID_WITH_ENTRY_RELAY";
+		case REGISTER_PAYLOAD_USER_ID_WITH_ENTRY_RELAY:
+			return "REGISTER_PAYLOAD_USER_ID_WITH_ENTRY_RELAY";
 		case REGISTER_USER_ID_WITH_RELAY:
 			return "REGISTER_USER_ID_WITH_RELAY";
+		case REGISTER_PAYLOAD_USER_ID_WITH_RELAY:
+			return "REGISTER_PAYLOAD_USER_ID_WITH_RELAY";
 		case DUMMY_PACKET:
 			return "DUMMY_PACKET";
 	}

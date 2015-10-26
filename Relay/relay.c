@@ -1,6 +1,7 @@
 #include "relay.h"
 
 #define ENABLE_LOGGING
+//#define PRINT_PACKETS
 
 sem_t keystore_sem;
 
@@ -12,6 +13,9 @@ unsigned int client_msg_port, id_cache_port, cert_request_port;
 char *relay_id;
 int relay_id_len;
 RSA *rsa;
+
+void handle_pthread_ret(int ret, int clientfd);
+void handle_pthread_bytesread(int bytes_read, int clientfd);
 
 int main(int argc, char const *argv[])
 {
@@ -42,6 +46,11 @@ int main(int argc, char const *argv[])
 	}
 
 	ret = initialize_key_store("[MAIN THREAD]");
+	if(ret < 0) {
+		exit(-2);	
+	}
+
+	ret = initialize_packet_definitions("[MAIN THREAD]");
 	if(ret < 0) {
 		exit(-2);	
 	}
@@ -479,18 +488,26 @@ void *thread_pool_manager_thread_thread(void *ptr)
 
 void *handle_msg_client_thread(void *ptr)
 {
-	int client_socket;
+	int i, ret, bytes_read, client_socket;
 	char *pthread_ret;
 	pthread_t self_thread_id;
+	unsigned char packet_data_encrypted[PACKET_SIZE_BYTES], packet_data_decrypted[PACKET_SIZE_BYTES];
+	unsigned char payload_data_decrypted[PACKET_SIZE_BYTES], packet_data[PACKET_SIZE_BYTES];
+	onion_route_data *or_data_ptr, *or_payload_data_ptr;
+	onion_route_data *or_data_decrypted_ptr, *or_payload_data_decrypted_ptr;
+	char thread_id_buf[64];
+	key or_key;
+	struct in_addr next_addr;
 
 	self_thread_id = pthread_self();
+	sprintf(thread_id_buf, "[MSG CLIENT THREAD 0x%x]", (unsigned int)self_thread_id);
 	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "[MSG CLIENT THREAD 0x%x] Created new client thread\n", (unsigned int)self_thread_id);
+		fprintf(stdout, "%s Created new client thread\n", thread_id_buf);
 	#endif
 
 	if(ptr == NULL) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MSG CLIENT THREAD 0x%x] Handle client thread created with null arguments\n", (unsigned int)self_thread_id);
+			fprintf(stdout, "%s Handle client thread created with null arguments\n", thread_id_buf);
 		#endif
 
 		pthread_ret = (char *)-1;
@@ -498,13 +515,65 @@ void *handle_msg_client_thread(void *ptr)
 	}
 	client_socket = *((int *)ptr);	
 
-	sleep(15);
+	bytes_read = 0;
+	for(i = 0; i < NUM_READ_ATTEMPTS; i++) {
+		bytes_read += read(client_socket, (packet_data_encrypted + bytes_read), (PACKET_SIZE_BYTES - bytes_read));
+		if(bytes_read < 0)
+			break;
+	}
+	handle_pthread_bytesread(bytes_read, client_socket);
+	#ifdef PRINT_PACKETS
+		fprintf(stdout, "\n ------------------------------------------------------------ \n");
+		for (i = 0; i < PACKET_SIZE_BYTES; ++i) {
+			fprintf(stdout, "%02x", packet_data_encrypted[i]);
+		}
+		fprintf(stdout, "\n\n ------------------------------------------------------------ \n");
+	#endif
+	
+	or_data_ptr = (onion_route_data *)packet_data_encrypted;
+	or_data_decrypted_ptr = (onion_route_data *)packet_data_decrypted;
+
+	ret = get_key_for_user_id(thread_id_buf, or_data_ptr->uid, &or_key);
+	handle_pthread_ret(ret, client_socket);
+	remove_key_from_key_store(thread_id_buf, or_data_ptr->uid);
+
+	ret = aes_decrypt_block(thread_id_buf, (unsigned char *)&(or_data_ptr->ord_enc), (payload_start_byte - cipher_text_byte_offset), 
+								(unsigned char *)or_key.value, AES_KEY_SIZE_BYTES, or_data_ptr->iv, (packet_data_decrypted + cipher_text_byte_offset));
+	handle_pthread_ret(ret, client_socket);
+
+	ret = set_key_for_user_id(thread_id_buf, or_data_decrypted_ptr->ord_enc.new_uid, (key *)&(or_data_decrypted_ptr->ord_enc.new_key));
+	handle_pthread_ret(ret, client_socket);
+
+	or_payload_data_ptr = (onion_route_data *)(packet_data_encrypted + payload_start_byte);
+	or_payload_data_decrypted_ptr = (onion_route_data *)payload_data_decrypted;
+
+	ret = get_key_for_user_id(thread_id_buf, or_payload_data_ptr->uid, &or_key);
+	handle_pthread_ret(ret, client_socket);
+	remove_key_from_key_store(thread_id_buf, or_payload_data_ptr->uid);
+
+	ret = aes_decrypt_block(thread_id_buf, (unsigned char *)&(or_payload_data_ptr->ord_enc), (PACKET_SIZE_BYTES - payload_start_byte - cipher_text_byte_offset), 
+								(unsigned char *)or_key.value, AES_KEY_SIZE_BYTES, or_payload_data_ptr->iv, (payload_data_decrypted + cipher_text_byte_offset));
+	handle_pthread_ret(ret, client_socket);
+
+	ret = set_key_for_user_id(thread_id_buf, or_payload_data_decrypted_ptr->ord_enc.new_uid, (key *)&(or_payload_data_decrypted_ptr->ord_enc.new_key));
+	handle_pthread_ret(ret, client_socket);
+	
+	ret = fill_buf_with_random_data(packet_data, PACKET_SIZE_BYTES);
+	handle_pthread_ret(ret, client_socket);
+	memcpy(packet_data, (packet_data_decrypted + sizeof(onion_route_data)), (sizeof(onion_route_data) * 2));
+	memcpy((packet_data + payload_start_byte), (payload_data_decrypted + sizeof(onion_route_data)), (PACKET_SIZE_BYTES - payload_start_byte));
+
+	next_addr.s_addr = or_data_decrypted_ptr->ord_enc.next_pkg_ip;
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "%s Found next ip = %s, port = %u\n", thread_id_buf, inet_ntoa(next_addr), or_data_decrypted_ptr->ord_enc.next_pkg_port);
+	#endif
+	send_packet_to_relay(packet_data, inet_ntoa(next_addr), or_data_decrypted_ptr->ord_enc.next_pkg_port);
 
 	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "[MSG CLIENT THREAD 0x%x] Client thread exit\n", (unsigned int)self_thread_id);
+		fprintf(stdout, "%s Client thread exit\n", thread_id_buf);
 	#endif
-	close(client_socket);
 
+	close(client_socket);
 	pthread_ret = (char *)0;
 	pthread_exit(pthread_ret);
 }
@@ -540,12 +609,16 @@ void *handle_id_cache_thread(void *ptr)
 		if(bytes_read < 0)
 			break;
 	}
-	if(bytes_read != PACKET_SIZE_BYTES) {
-		pthread_ret = (char *)0;
-		pthread_exit(pthread_ret);
-	}
+	handle_pthread_bytesread(bytes_read, client_socket);
+	#ifdef PRINT_PACKETS
+		fprintf(stdout, "\n ------------------------------------------------------------ \n");
+		for (i = 0; i < PACKET_SIZE_BYTES; ++i) {
+			fprintf(stdout, "%02x", packet_data_encrypted[i]);
+		}
+		fprintf(stdout, "\n\n ------------------------------------------------------------ \n");
+	#endif
 	
-	RSA_private_decrypt(RSA_KEY_LENGTH_BYTES, packet_data_encrypted, packet_data, rsa, RSA_PKCS1_OAEP_PADDING);
+	RSA_private_decrypt(RSA_KEY_LENGTH_BYTES, (packet_data_encrypted + payload_start_byte), packet_data, rsa, RSA_PKCS1_OAEP_PADDING);
 	id_data = ((id_cache_data *)packet_data);
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "[ID CACHE CLIENT THREAD 0x%x] Received id cache data, user id = %d, key = ", (unsigned int)self_thread_id, (unsigned int)id_data->relay_user_id);
@@ -564,9 +637,75 @@ void *handle_id_cache_thread(void *ptr)
 		fprintf(stdout, "[ID CACHE CLIENT THREAD 0x%x] Client thread exit\n", (unsigned int)self_thread_id);
 	#endif
 
+
+	// TODO don't forget to delete keys from keystore after timeout!
+	// TODO need to prevent flood of new keys from non relay client! Make sure only 1 packet / 3 sec from same IP
+
 	close(client_socket);
 	pthread_ret = (char *)0;
 	pthread_exit(pthread_ret);
+}
+
+int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destination_port)
+{
+	int i, ret, bytes_sent;
+	int source_port, cr_socket;
+	struct sockaddr_in serv_addr, client_addr;
+	unsigned int initial_seed_value;
+
+	cr_socket = socket(AF_INET, SOCK_STREAM, 0);
+	if(cr_socket < 0){
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[MAIN THREAD] Failed to create stream socket\n");
+		#endif
+
+		return -1;
+	}
+
+	// Lets randomize the source port (otherwise linux just increments by 3 each time)
+	bzero((char *) &client_addr, sizeof(client_addr));
+	client_addr.sin_family = AF_INET;
+	for(i = 0; i < NUM_BIND_ATTEMPTS; i++) {
+		initial_seed_value = (((unsigned int)relay_id[1])<<24) | (((unsigned int)relay_id[3])<<16) | (((unsigned int)relay_id[0])<<8) | ((unsigned int)relay_id[2]);
+		source_port = get_pseudo_random_number(initial_seed_value);
+		source_port %= 65535;
+		if(source_port < 16384)
+			source_port += 16384;
+		client_addr.sin_port = htons(source_port);
+
+		ret = bind(cr_socket, (struct sockaddr *) &client_addr, sizeof(client_addr));
+		if(ret == 0)
+			break;
+
+		usleep(100000);
+	}
+
+	bzero((char *) &serv_addr, sizeof(serv_addr));
+	serv_addr.sin_family = AF_INET;
+	serv_addr.sin_port = htons(destination_port);
+	serv_addr.sin_addr.s_addr = inet_addr(destination_ip);
+	ret = connect(cr_socket, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
+	if(ret != 0){
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[MAIN THREAD] Failed to connect to relay with ip = %s\n", destination_ip);
+		#endif
+
+		return -1;
+	}
+
+	bytes_sent = 0;
+	for (i = 0; i < MAX_SEND_ATTEMPTS; i++) {
+		bytes_sent += write(cr_socket, (packet + bytes_sent), (PACKET_SIZE_BYTES - bytes_sent));
+		if(bytes_sent == PACKET_SIZE_BYTES) {
+			break;
+		}
+	}
+	close(cr_socket);
+
+	if(bytes_sent != PACKET_SIZE_BYTES) {
+		return -1;
+	}
+	return 0;
 }
 
 int get_thread_pool_id_from_index(int index, char *pool_id /* out */)
@@ -585,4 +724,26 @@ int get_thread_pool_id_from_index(int index, char *pool_id /* out */)
 	}
 
 	return 0;
+}
+
+void handle_pthread_ret(int ret, int clientfd)
+{
+	char *pthread_ret;
+
+	if(ret < 0) {
+		close(clientfd);
+		pthread_ret = (char *)0;
+		pthread_exit(pthread_ret);
+	}
+}
+
+void handle_pthread_bytesread(int bytes_read, int clientfd)
+{
+	char *pthread_ret;
+
+	if(bytes_read != PACKET_SIZE_BYTES) {
+		close(clientfd);
+		pthread_ret = (char *)0;
+		pthread_exit(pthread_ret);
+	}
 }

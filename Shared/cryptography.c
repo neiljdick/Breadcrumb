@@ -291,6 +291,163 @@ int generate_rsa_key_pair(const char *relay_id, RSA **rsa_out /* out */)
 	return 0;
 }
 
+int aes_encrypt_block(char *thread_id, unsigned char *plaintext, int plaintext_len, unsigned char *key, int key_len, unsigned char *iv, unsigned char *cipher_text /* out */)
+{
+	int ret;
+	EVP_CIPHER_CTX ctx;
+	int cipher_text_len;
+
+	if((plaintext == NULL) || (key == NULL) || (iv == NULL) || (cipher_text == NULL)) {
+		return -1;
+	}
+
+	init_cryptography_env();
+
+	if((plaintext_len % key_len) != 0) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s AES encryption function passed plaintext size (%u) not aligned to block boundary (%u)\n", thread_id, plaintext_len, key_len);
+		#endif
+
+		return -1;
+	}
+
+	EVP_CIPHER_CTX_init(&ctx);
+	if(key_len == AES_128_KEY_BYTE_LEN) {
+		ret = EVP_EncryptInit_ex(&ctx, EVP_aes_128_cbc(), NULL, key, iv);
+	}
+	else if(key_len == AES_192_KEY_BYTE_LEN) {
+		ret = EVP_EncryptInit_ex(&ctx, EVP_aes_192_cbc(), NULL, key, iv);
+	}
+	else if(key_len == AES_256_KEY_BYTE_LEN) {
+		ret = EVP_EncryptInit_ex(&ctx, EVP_aes_256_cbc(), NULL, key, iv);
+	}
+	else {
+		return -1;
+	}
+	if(ret != 1) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Failed to initialize AES encryption\n", thread_id);
+		#endif
+
+		return -1;
+	}
+
+	ret = EVP_EncryptUpdate(&ctx, cipher_text, &cipher_text_len, plaintext, plaintext_len);
+	if(ret != 1) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Failed to perform %u bit AES encryption\n", thread_id, (key_len*8));
+		#endif
+
+		return -1;
+	}
+
+	EVP_CIPHER_CTX_cleanup(&ctx);
+
+/*	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "%s AES encryption function, encrypting block:", thread_id);
+		for (i = 0; i < plaintext_len; ++i) {
+			fprintf(stdout, "%02x", 0xFF & plaintext[i]);
+		}
+		fprintf(stdout, "\n");
+		fprintf(stdout, "%s AES encryption function, iv:", thread_id);
+		for (i = 0; i < 16; ++i) {
+			fprintf(stdout, "%02x", 0xFF & iv[i]);
+		}
+		fprintf(stdout, "\n");
+		fprintf(stdout, "%s AES encryption function, key:", thread_id);
+		for (i = 0; i < 16; ++i) {
+			fprintf(stdout, "%02x", 0xFF & key[i]);
+		}
+		fprintf(stdout, "\n");
+		fprintf(stdout, "%s AES encryption function, encrypted block:", thread_id);
+		for (i = 0; i < plaintext_len; ++i) {
+			fprintf(stdout, "%02x", 0xFF & cipher_text[i]);
+		}
+		fprintf(stdout, "\n");
+	#endif
+*/
+
+	return 0;	
+}
+
+int aes_decrypt_block(char *thread_id, unsigned char *cipher_text, int cipher_text_len, unsigned char *key, int key_len, unsigned char *iv, unsigned char *plaintext /* out */)
+{
+	int ret;
+	EVP_CIPHER_CTX ctx;
+	int plain_text_len;
+
+	if((cipher_text == NULL) || (key == NULL) || (iv == NULL) || (plaintext == NULL)) {
+		return -1;
+	}
+	
+	init_cryptography_env();
+
+	if((cipher_text_len % key_len) != 0) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s AES decryption function passed ciphertext size (%u) not aligned to block boundary (%u)\n", thread_id, cipher_text_len, key_len);
+		#endif
+
+		return -1;
+	}
+
+	EVP_CIPHER_CTX_init(&ctx);
+	if(key_len == AES_128_KEY_BYTE_LEN) {
+		ret = EVP_DecryptInit_ex(&ctx, EVP_aes_128_cbc(), NULL, key, iv);
+	}
+	else if(key_len == AES_192_KEY_BYTE_LEN) {
+		ret = EVP_DecryptInit_ex(&ctx, EVP_aes_192_cbc(), NULL, key, iv);
+	}
+	else if(key_len == AES_256_KEY_BYTE_LEN) {
+		ret = EVP_DecryptInit_ex(&ctx, EVP_aes_256_cbc(), NULL, key, iv);
+	}
+	else {
+		return -1;
+	}
+	if(ret != 1) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Failed to initialize AES encryption\n", thread_id);
+		#endif
+
+		return -1;
+	}
+
+	ret = EVP_DecryptUpdate(&ctx, plaintext, &plain_text_len, cipher_text, cipher_text_len);
+	if(ret != 1) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Failed to perform %u bit AES decryption\n", thread_id, (key_len*8));
+		#endif
+
+		return -1;
+	}
+
+	EVP_CIPHER_CTX_cleanup(&ctx);
+
+/*	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "%s AES encryption function, decrypting block:", thread_id);
+		for (i = 0; i < cipher_text_len; ++i) {
+			fprintf(stdout, "%02x", 0xFF & cipher_text[i]);
+		}
+		fprintf(stdout, "\n");
+		fprintf(stdout, "%s AES encryption function, iv:", thread_id);
+		for (i = 0; i < 16; ++i) {
+			fprintf(stdout, "%02x", 0xFF & iv[i]);
+		}
+		fprintf(stdout, "\n");
+		fprintf(stdout, "%s AES encryption function, key:", thread_id);
+		for (i = 0; i < 16; ++i) {
+			fprintf(stdout, "%02x", 0xFF & key[i]);
+		}
+		fprintf(stdout, "\n");
+		fprintf(stdout, "%s AES encryption function, decrypted block:", thread_id);
+		for (i = 0; i < cipher_text_len; ++i) {
+			fprintf(stdout, "%02x", 0xFF & plaintext[i]);
+		}
+		fprintf(stdout, "\n");
+	#endif
+*/
+	return 0;	
+}
+
 int generate_AES_key(unsigned char *buf, int buf_len)
 {
 	int ret;

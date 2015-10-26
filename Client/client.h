@@ -41,11 +41,16 @@ char *program_name = "Client";
 
 #define MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER 	(2)
 
+#define PACKET_TRANSMISSION_DELAY				(3)
+#define MAIN_THREAD_SLEEP_TIME					(5)
+
 const char *public_cert_dir = ".relay_certs";
 
 typedef enum {
 	REGISTER_USER_ID_WITH_ENTRY_RELAY = 0,
+	REGISTER_PAYLOAD_USER_ID_WITH_ENTRY_RELAY,
 	REGISTER_USER_ID_WITH_RELAY,
+	REGISTER_PAYLOAD_USER_ID_WITH_RELAY,
 	DUMMY_PACKET
 } packet_type;
 
@@ -62,6 +67,8 @@ typedef struct relay_info
 	char relay_ip[RELAY_IP_MAX_LENGTH];
 	unsigned char aes_key[AES_KEY_SIZE_BYTES];
 	unsigned int relay_user_id;
+	unsigned char payload_aes_key[AES_KEY_SIZE_BYTES];
+	unsigned int payload_relay_user_id;
 	RSA *public_cert;
 } relay_info;
 
@@ -81,6 +88,18 @@ typedef struct route_info
 	int route_length;
 } route_info;
 
+typedef struct send_packet_node
+{
+	unsigned char packet_buf[PACKET_SIZE_BYTES];
+	char destination_ip[RELAY_IP_MAX_LENGTH];
+	int destination_port;
+	struct send_packet_node *next;
+} send_packet_node;
+
+int init_send_packet_node(void);
+int init_send_packet_thread(pthread_t *send_packet_thread);
+void *send_packet_handler(void *);
+int place_packet_on_send_queue(unsigned char *packet, char *destination_ip, int destination_port);
 int get_friend_id(char *friend_id /* out */);
 int init_chat(char *friend_name, conversation_info *ci_out /* out */);
 int get_relay_public_certificates_debug(conversation_info *ci_info);

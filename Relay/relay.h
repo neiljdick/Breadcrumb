@@ -46,6 +46,8 @@ const char *unknown_str 			= "UNKNOWN";
 #define ID_CACHE_SLEEP_US 				(50000)
 
 #define NUM_READ_ATTEMPTS 				(5)
+#define NUM_BIND_ATTEMPTS 				(5)
+#define MAX_SEND_ATTEMPTS 				(5)
 
 typedef struct client_thread_description
 {
@@ -78,5 +80,6 @@ void *client_id_cache_handler(void *ptr);
 int initialize_thread_pools();
 int get_index_of_unused_thread_descriptor(client_thread_description *cthread_pool, unsigned int thread_pool_length, int *index /* out */);
 int get_thread_pool_id_from_index(int index, char *pool_id /* out */);
+int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destination_port);
 
 #endif
