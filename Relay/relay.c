@@ -523,7 +523,7 @@ void *handle_msg_client_thread(void *ptr)
 	}
 	handle_pthread_bytesread(bytes_read, client_socket);
 	#ifdef PRINT_PACKETS
-		fprintf(stdout, "\n ------------------------------------------------------------ \n");
+		fprintf(stdout, "\n ------------------------------------------------------------ \n\n");
 		for (i = 0; i < PACKET_SIZE_BYTES; ++i) {
 			fprintf(stdout, "%02x", packet_data_encrypted[i]);
 		}
@@ -611,7 +611,7 @@ void *handle_id_cache_thread(void *ptr)
 	}
 	handle_pthread_bytesread(bytes_read, client_socket);
 	#ifdef PRINT_PACKETS
-		fprintf(stdout, "\n ------------------------------------------------------------ \n");
+		fprintf(stdout, "\n ------------------------------------------------------------ \n\n");
 		for (i = 0; i < PACKET_SIZE_BYTES; ++i) {
 			fprintf(stdout, "%02x", packet_data_encrypted[i]);
 		}

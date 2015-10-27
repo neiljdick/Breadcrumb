@@ -480,11 +480,19 @@ int fill_buf_with_random_data(unsigned char *buf, int buf_len)
 	init_cryptography_env();
 	ret = RAND_status();
 	if(ret != 1) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "Failed to fill packet buffer with random data \n");
+		#endif
+
 		return -1;
 	}
 
 	ret = RAND_bytes(buf, buf_len);
 	if(ret != 1) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "Failed to fill packet buffer with random data \n");
+		#endif
+
 		return -1;
 	}
 	return 0;

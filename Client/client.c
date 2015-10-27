@@ -596,7 +596,7 @@ int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info
 	}
 	#ifdef PRINT_PACKETS
 		int i;
-		fprintf(stdout, "\n ------------------------------------------------------------ \n");
+		fprintf(stdout, "\n ------------------------------------------------------------ \n\n");
 		for (i = 0; i < PACKET_SIZE_BYTES; i++) {
 			fprintf(stdout, "%02x", packet_buf[i]);
 		}
@@ -620,20 +620,22 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 	int ret;
 	id_cache_data ic_data;
 	unsigned int relay_register_index;
-	onion_route_data or_data[3];
-	onion_route_data or_payload_data[3];
+	onion_route_data or_data[MAX_ROUTE_LENGTH];
+	onion_route_data or_payload_data[MAX_ROUTE_LENGTH];
 	unsigned char encrypt_buffer[PACKET_SIZE_BYTES];
 
 	memset(destination_ip, 0, RELAY_IP_MAX_LENGTH);
-	memset(or_data, 0, sizeof(or_data));
-	memset(or_payload_data, 0, sizeof(or_payload_data));
-
+	
+	ret = fill_buf_with_random_data((unsigned char *)or_data, sizeof(or_data));
+	if(ret < 0) {
+		return -1;
+	}
+	ret = fill_buf_with_random_data((unsigned char *)or_payload_data, sizeof(or_payload_data));
+	if(ret < 0) {
+		return -1;
+	}
 	ret = fill_buf_with_random_data(packet, PACKET_SIZE_BYTES);
 	if(ret < 0) {
-		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to fill packet buffer with random data\n");
-		#endif
-
 		return -1;
 	}
 
