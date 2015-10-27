@@ -4,6 +4,7 @@
 
 const unsigned int payload_start_byte = (MAX_ROUTE_LENGTH * sizeof(onion_route_data));
 const unsigned int cipher_text_byte_offset = offsetof(onion_route_data, ord_enc);
+const unsigned int max_payload_len = (PACKET_SIZE_BYTES - (2 * (MAX_ROUTE_LENGTH * sizeof(onion_route_data))));
 
 int initialize_packet_definitions(char *thread_id)
 {

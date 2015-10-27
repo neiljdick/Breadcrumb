@@ -675,14 +675,6 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 
 	memset(destination_ip, 0, RELAY_IP_MAX_LENGTH);
 	
-	ret = fill_buf_with_random_data((unsigned char *)or_data, sizeof(or_data));
-	if(ret < 0) {
-		return -1;
-	}
-	ret = fill_buf_with_random_data((unsigned char *)or_payload_data, sizeof(or_payload_data));
-	if(ret < 0) {
-		return -1;
-	}
 	ret = fill_buf_with_random_data(packet, PACKET_SIZE_BYTES);
 	if(ret < 0) {
 		return -1;
@@ -724,6 +716,14 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 			}
 			relay_register_index = *((unsigned int *)other);
 			if(relay_register_index > RELAY_POOL_MAX_SIZE) {
+				return -1;
+			}
+			ret = fill_buf_with_random_data((unsigned char *)or_data, sizeof(or_data));
+			if(ret < 0) {
+				return -1;
+			}
+			ret = fill_buf_with_random_data((unsigned char *)or_payload_data, sizeof(or_payload_data));
+			if(ret < 0) {
 				return -1;
 			}
 			memcpy(destination_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, RELAY_IP_MAX_LENGTH);
@@ -806,6 +806,11 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 				return -1;
 			}
 
+			ret = generate_onion_route_payload_from_route_info(ci_info, r_info, NULL, 0, packet);
+			if(ret < 0) {
+				return -1;
+			}
+
 		break;
 	}
 
@@ -846,9 +851,6 @@ int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_
 		generate_AES_key((unsigned char *)or_data[i].iv, AES_KEY_SIZE_BYTES);
 		or_data[i].uid = ci_info->ri_pool[route_index].relay_user_id;
 		generate_new_user_id(&(or_data[i].ord_enc.new_uid));
-
-		fprintf(stdout, "OR OFFSET: %u, uid: %u, new uid: %u\n", or_offset, or_data[i].uid, or_data[i].ord_enc.new_uid);
-
 		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 		or_data[i].ord_enc.next_pkg_port = message_port;
 		if(previous_route_index < 0) {
@@ -867,6 +869,66 @@ int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_
 		memcpy((encrypt_buffer + or_offset + cipher_text_byte_offset), (packet + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset));
 
 		previous_route_index = route_index;
+		or_offset -= sizeof(onion_route_data);
+	}
+
+	return 0;
+}
+
+int generate_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *r_info, char *payload, int payload_len, unsigned char *packet)
+{
+	int i, ret;
+	int route_index;
+	unsigned int or_offset;
+	onion_route_data or_data[MAX_ROUTE_LENGTH];
+	unsigned char encrypt_buffer[PACKET_SIZE_BYTES];
+
+	if((ci_info == NULL) || (r_info == NULL) || (packet == NULL)) {
+		return -1;
+	}
+	if(r_info->route_length > MAX_ROUTE_LENGTH) {
+		return -1;
+	}
+	if(payload_len > max_payload_len) {
+		return -1;
+	}
+
+	ret = fill_buf_with_random_data((unsigned char *)or_data, sizeof(or_data));
+	if(ret < 0) {
+		return -1;
+	}
+	ret = fill_buf_with_random_data((unsigned char *)encrypt_buffer, PACKET_SIZE_BYTES);
+	if(ret < 0) {
+		return -1;
+	}
+	if(payload != NULL) {
+		memcpy((encrypt_buffer + payload_start_byte + (r_info->route_length * sizeof(onion_route_data))), payload, payload_len);
+	}
+
+	or_offset = payload_start_byte + ((r_info->route_length - 1) * sizeof(onion_route_data));
+	for (i = (r_info->route_length - 1); i >= 0; i--) {
+		route_index = r_info->relay_route[i];
+		if((route_index < 0) || (route_index >= RELAY_POOL_MAX_SIZE)) {
+			return -1;
+		}
+		if(ci_info->ri_pool[route_index].is_active != 1) {
+			return -1;
+		}
+
+		generate_AES_key((unsigned char *)or_data[i].iv, AES_KEY_SIZE_BYTES);
+		or_data[i].uid = ci_info->ri_pool[route_index].payload_relay_user_id;
+		generate_new_user_id(&(or_data[i].ord_enc.new_uid));
+		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+
+		memcpy((packet + or_offset), &(or_data[i]), cipher_text_byte_offset);
+		memcpy((encrypt_buffer + or_offset), &(or_data[i]), sizeof(onion_route_data));
+		ret = aes_encrypt_block("[MAIN THREAD]", (encrypt_buffer + or_offset + cipher_text_byte_offset), (PACKET_SIZE_BYTES - or_offset - cipher_text_byte_offset), 
+									ci_info->ri_pool[route_index].payload_aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[i].iv), (packet + or_offset + cipher_text_byte_offset));
+		if(ret < 0) {
+			return -1;
+		}
+		memcpy((encrypt_buffer + or_offset + cipher_text_byte_offset), (packet + or_offset + cipher_text_byte_offset), (PACKET_SIZE_BYTES - or_offset - cipher_text_byte_offset));
+
 		or_offset -= sizeof(onion_route_data);
 	}
 

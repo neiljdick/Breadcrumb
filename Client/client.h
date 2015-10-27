@@ -115,7 +115,8 @@ int generate_new_user_id(unsigned int *uid /* out */);
 int is_valid_ip(char *ip, int *valid /* out */);
 int print_conversation(char *thread_id, conversation_info *ci_info);
 char* get_packet_type_str(packet_type type);
-int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_info *r_info, unsigned char *packet);
 int send_dummy_packet(conversation_info *ci_info);
+int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_info *r_info, unsigned char *packet);
+int generate_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *r_info, char *payload, int payload_len, unsigned char *packet);
 
 #endif

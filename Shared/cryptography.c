@@ -343,7 +343,7 @@ int aes_encrypt_block(char *thread_id, unsigned char *plaintext, int plaintext_l
 
 	EVP_CIPHER_CTX_cleanup(&ctx);
 
-	#ifdef ENABLE_LOGGING
+/*	#ifdef ENABLE_LOGGING
 		int i;
 		fprintf(stdout, "%s AES encryption function, encrypting block:", thread_id);
 		for (i = 0; i < plaintext_len; ++i) {
@@ -365,7 +365,7 @@ int aes_encrypt_block(char *thread_id, unsigned char *plaintext, int plaintext_l
 			fprintf(stdout, "%02x", 0xFF & cipher_text[i]);
 		}
 		fprintf(stdout, "\n");
-	#endif
+	#endif*/
 
 
 	return 0;	
@@ -423,7 +423,7 @@ int aes_decrypt_block(char *thread_id, unsigned char *cipher_text, int cipher_te
 
 	EVP_CIPHER_CTX_cleanup(&ctx);
 
-	#ifdef ENABLE_LOGGING
+/*	#ifdef ENABLE_LOGGING
 		int i;
 		fprintf(stdout, "%s AES encryption function, decrypting block:", thread_id);
 		for (i = 0; i < cipher_text_len; ++i) {
@@ -445,7 +445,7 @@ int aes_decrypt_block(char *thread_id, unsigned char *cipher_text, int cipher_te
 			fprintf(stdout, "%02x", 0xFF & plaintext[i]);
 		}
 		fprintf(stdout, "\n");
-	#endif
+	#endif*/
 
 	return 0;	
 }

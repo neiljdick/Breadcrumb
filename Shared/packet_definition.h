@@ -13,6 +13,7 @@
 
 extern const unsigned int payload_start_byte;
 extern const unsigned int cipher_text_byte_offset;
+extern const unsigned int max_payload_len;
 
 typedef struct onion_route_data_encrypted
 {
