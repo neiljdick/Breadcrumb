@@ -2,6 +2,7 @@
 
 #define ENABLE_LOGGING
 
+const unsigned int packet_size_bytes = (((ONION_ROUTE_DATA_SIZE * MAX_ROUTE_LENGTH) * 2) + (sizeof(payload_data)));
 const unsigned int payload_start_byte = (MAX_ROUTE_LENGTH * sizeof(onion_route_data));
 const unsigned int cipher_text_byte_offset = offsetof(onion_route_data, ord_enc);
 const unsigned int max_payload_len = (PACKET_SIZE_BYTES - (2 * (MAX_ROUTE_LENGTH * sizeof(onion_route_data))));
@@ -22,7 +23,7 @@ int initialize_packet_definitions(char *thread_id)
 
 void print_packet_definitions(void)
 {
-	fprintf(stdout, "Packet size bytes = %u\n", PACKET_SIZE_BYTES);
+	fprintf(stdout, "Packet size bytes = %u\n", packet_size_bytes);
 	fprintf(stdout, "Size of struct 'onion_route_data_encrypted' = %lu\n", (long unsigned int)sizeof(onion_route_data_encrypted));
 	fprintf(stdout, "Size of struct 'onion_route_data' = %lu\n", (long unsigned int)sizeof(onion_route_data));
 	fprintf(stdout, "Size of struct 'id_cache_data' = %lu\n", (long unsigned int)sizeof(id_cache_data));
@@ -50,4 +51,21 @@ int print_or_data(char *thread_id, onion_route_data *or_data)
 	fprintf(stdout, "\n");
 
 	return 0;
+}
+
+char* get_string_for_payload_type(payload_type type)
+{
+	switch(type) {
+		case DUMMY_PACKET_NO_RETURN_ROUTE:	return "DUMMY_PACKET_NO_RETURN_ROUTE";
+		case DUMMY_PACKET_W_RETURN_ROUTE:	return "DUMMY_PACKET_W_RETURN_ROUTE";
+		case SINGLE_RETURN_ROUTE:			return "SINGLE_RETURN_ROUTE";
+		case DUAL_RETURN_ROUTE:				return "DUAL_RETURN_ROUTE";
+		case MESSAGE_PACKET:				return "MESSAGE_PACKET";
+	}
+
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "Found unknown packet type = 0x%x\n", 0xffff & type);
+	#endif
+
+	return "UNKNOWN";
 }

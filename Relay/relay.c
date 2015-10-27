@@ -1,6 +1,7 @@
 #include "relay.h"
 
 #define ENABLE_LOGGING
+//#define ENABLE_THREAD_LOGGING
 //#define PRINT_PACKETS
 
 sem_t keystore_sem;
@@ -20,7 +21,6 @@ void handle_pthread_bytesread(int bytes_read, int clientfd);
 int main(int argc, char const *argv[])
 {
 	int ret;
-	int errno_cached;
 	pthread_t certificate_request_thread, thread_pool_manager_thread;
 	pthread_t client_msg_new_connection_handler_thread, client_id_cache_handler_thread;
 
@@ -74,9 +74,8 @@ int main(int argc, char const *argv[])
 
 	ret = pthread_create(&thread_pool_manager_thread, NULL, thread_pool_manager_thread_thread, NULL);
 	if(ret != 0) {
-		errno_cached = errno;
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to create thread pool manager thread, %s\n", strerror(errno_cached));
+			fprintf(stdout, "[MAIN THREAD] Failed to create thread pool manager thread, %s\n", strerror(errno));
 		#endif
 
 		exit(-4);
@@ -84,9 +83,8 @@ int main(int argc, char const *argv[])
 
 	ret = pthread_create(&certificate_request_thread, NULL, certificate_request_handler_thread , NULL);
 	if(ret != 0) {
-		errno_cached = errno;
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to create certificate request thread, %s\n", strerror(errno_cached));
+			fprintf(stdout, "[MAIN THREAD] Failed to create certificate request thread, %s\n", strerror(errno));
 		#endif
 
 		exit(-4);
@@ -94,9 +92,8 @@ int main(int argc, char const *argv[])
 
 	ret = pthread_create(&client_msg_new_connection_handler_thread, NULL, client_msg_new_connection_handler, NULL);
 	if(ret != 0) {
-		errno_cached = errno;
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to create new msg connection handler thread, %s\n", strerror(errno_cached));
+			fprintf(stdout, "[MAIN THREAD] Failed to create new msg connection handler thread, %s\n", strerror(errno));
 		#endif
 
 		exit(-4);
@@ -104,9 +101,8 @@ int main(int argc, char const *argv[])
 
 	ret = pthread_create(&client_id_cache_handler_thread, NULL, client_id_cache_handler, NULL);
 	if(ret != 0) {
-		errno_cached = errno;
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to create new msg connection handler thread, %s\n", strerror(errno_cached));
+			fprintf(stdout, "[MAIN THREAD] Failed to create new msg connection handler thread, %s\n", strerror(errno));
 		#endif
 
 		exit(-4);
@@ -134,12 +130,12 @@ int initialize_key_store(char *thread_id)
 void *certificate_request_handler_thread(void *ptr)
 {
 	int ret, certificate_request_listening_socket, client_socket;
-	int errno_cached, public_key_buffer_len;
+	int public_key_buffer_len;
 	socklen_t sockaddr_len;
 	struct sockaddr_in client_addr;
 	char *public_key_buffer;
 
-	#ifdef ENABLE_LOGGING
+	#ifdef ENABLE_THREAD_LOGGING
 		fprintf(stdout, "[CERTIFICATE REQUEST THREAD] Created certificate request handler thread\n");
 	#endif
 
@@ -158,14 +154,13 @@ void *certificate_request_handler_thread(void *ptr)
 		bzero((char *) &client_addr, sizeof(client_addr));
 		client_socket = accept(certificate_request_listening_socket, (struct sockaddr *)&client_addr, &sockaddr_len);
 		if(client_socket < 0) {
-			errno_cached = errno;
-			#ifdef ENABLE_LOGGING
-				fprintf(stdout, "[CERTIFICATE REQUEST THREAD] Failed to accept client connection, %s\n", strerror(errno_cached));
+			#ifdef ENABLE_THREAD_LOGGING
+				fprintf(stdout, "[CERTIFICATE REQUEST THREAD] Failed to accept client connection, %s\n", strerror(errno));
 			#endif
 
 			continue;
 		}
-		#ifdef ENABLE_LOGGING
+		#ifdef ENABLE_THREAD_LOGGING
 			fprintf(stdout, "[CERTIFICATE REQUEST THREAD] %s:%d requested certificate\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 		#endif
 
@@ -181,7 +176,6 @@ void *certificate_request_handler_thread(void *ptr)
 void *client_msg_new_connection_handler(void *ptr)
 {
 	int ret, listening_socket, client_socket;
-	int errno_cached;
 	socklen_t sockaddr_len;
 	struct sockaddr_in client_addr;
 
@@ -189,7 +183,7 @@ void *client_msg_new_connection_handler(void *ptr)
 	if(ret < 0) {
 		exit(-5);
 	}
-	#ifdef ENABLE_LOGGING
+	#ifdef ENABLE_THREAD_LOGGING
 		fprintf(stdout, "[MSG CONNECTION HANDLER THREAD] listening on port=%u\n", client_msg_port);
 	#endif	
 
@@ -198,14 +192,13 @@ void *client_msg_new_connection_handler(void *ptr)
 		bzero((char *) &client_addr, sizeof(client_addr));
 		client_socket = accept(listening_socket, (struct sockaddr *)&client_addr, &sockaddr_len);
 		if(client_socket < 0) {
-			errno_cached = errno;
-			#ifdef ENABLE_LOGGING
-				fprintf(stdout, "[MSG CONNECTION HANDLER THREAD] Failed to accept client connection, %s\n", strerror(errno_cached));
+			#ifdef ENABLE_THREAD_LOGGING
+				fprintf(stdout, "[MSG CONNECTION HANDLER THREAD] Failed to accept client connection, %s\n", strerror(errno));
 			#endif
 
 			continue;
 		}
-		#ifdef ENABLE_LOGGING
+		#ifdef ENABLE_THREAD_LOGGING
 			fprintf(stdout, "[MSG CONNECTION HANDLER THREAD] %s:%d connected\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 		#endif
 
@@ -216,7 +209,6 @@ void *client_msg_new_connection_handler(void *ptr)
 void *client_id_cache_handler(void *ptr)
 {
 	int ret, listening_socket, client_socket;
-	int errno_cached;
 	socklen_t sockaddr_len;
 	struct sockaddr_in client_addr;
 
@@ -224,7 +216,7 @@ void *client_id_cache_handler(void *ptr)
 	if(ret < 0) {
 		exit(-5);
 	}
-	#ifdef ENABLE_LOGGING
+	#ifdef ENABLE_THREAD_LOGGING
 		fprintf(stdout, "[ID CACHE HANDLER THREAD] Listening on port=%u\n", id_cache_port);
 	#endif	
 
@@ -233,14 +225,13 @@ void *client_id_cache_handler(void *ptr)
 		bzero((char *) &client_addr, sizeof(client_addr));
 		client_socket = accept(listening_socket, (struct sockaddr *)&client_addr, &sockaddr_len);
 		if(client_socket < 0) {
-			errno_cached = errno;
-			#ifdef ENABLE_LOGGING
-				fprintf(stdout, "[ID CACHE HANDLER THREAD] Failed to accept client connection, %s\n", strerror(errno_cached));
+			#ifdef ENABLE_THREAD_LOGGING
+				fprintf(stdout, "[ID CACHE HANDLER THREAD] Failed to accept client connection, %s\n", strerror(errno));
 			#endif
 
 			continue;
 		}
-		#ifdef ENABLE_LOGGING
+		#ifdef ENABLE_THREAD_LOGGING
 			fprintf(stdout, "[ID CACHE HANDLER THREAD] %s:%d connected\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 		#endif
 
@@ -288,7 +279,7 @@ int init_listening_socket(char *thread_id, unsigned int port, int *listening_soc
 
 int add_new_thread_to_pool(char *thread_id, int thread_pool_index, int client_socket)
 {
-	int ret, errno_cached;
+	int ret;
 	int unused_thread_index;
 	void *thread_arg;
 
@@ -298,7 +289,7 @@ int add_new_thread_to_pool(char *thread_id, int thread_pool_index, int client_so
 
 	sem_wait(&(thread_pools[thread_pool_index].ct_pool_sem));
 	if(thread_pools[thread_pool_index].num_active_client_threads >= thread_pools[thread_pool_index].thread_pool_length) {
-		#ifdef ENABLE_LOGGING
+		#ifdef ENABLE_THREAD_LOGGING
 			fprintf(stdout, "%s Unable to accept new client socket connections as number of connections (%u) \
 				has reached maximum allowed\n", thread_id, thread_pools[thread_pool_index].num_active_client_threads);
 		#endif
@@ -310,7 +301,7 @@ int add_new_thread_to_pool(char *thread_id, int thread_pool_index, int client_so
 
 	get_index_of_unused_thread_descriptor(thread_pools[thread_pool_index].cthread_pool, thread_pools[thread_pool_index].thread_pool_length, &unused_thread_index);
 	if(unused_thread_index == -1) {
-		#ifdef ENABLE_LOGGING
+		#ifdef ENABLE_THREAD_LOGGING
 			fprintf(stdout, "%s Client thread pool reached maximum, rejecting client connection attempt\n", thread_id);
 		#endif
 
@@ -323,9 +314,8 @@ int add_new_thread_to_pool(char *thread_id, int thread_pool_index, int client_so
 
 	ret = pthread_create(&(thread_pools[thread_pool_index].cthread_pool[unused_thread_index].thread_id), NULL, thread_pools[thread_pool_index].start_routine, thread_arg);
 	if(ret != 0) {
-		errno_cached = errno;
-		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "%s Failed to create client handler thread, %s\n", thread_id, strerror(errno_cached));
+		#ifdef ENABLE_THREAD_LOGGING
+			fprintf(stdout, "%s Failed to create client handler thread, %s\n", thread_id, strerror(errno));
 		#endif
 
 		close(client_socket);
@@ -342,7 +332,7 @@ int add_new_thread_to_pool(char *thread_id, int thread_pool_index, int client_so
 		thread_pools[thread_pool_index].first_ct = thread_pools[thread_pool_index].first_ct->next;
 	}
 	thread_pools[thread_pool_index].num_active_client_threads++;
-	#ifdef ENABLE_LOGGING
+	#ifdef ENABLE_THREAD_LOGGING
 		fprintf(stdout, "%s New number of active client threads: %u\n", thread_id, thread_pools[thread_pool_index].num_active_client_threads);
 	#endif
 	sem_post(&(thread_pools[thread_pool_index].ct_pool_sem));
@@ -413,14 +403,13 @@ int get_index_of_unused_thread_descriptor(client_thread_description *cthread_poo
 void *thread_pool_manager_thread_thread(void *ptr)
 {
 	char *pthread_ret;
-	pthread_t self_thread_id;
 	int ret, i;
 	void *res;
 	struct client_thread_description *ct_descript_node, *ct_descript_node_prev;
-	char pool_id_buf[POOL_ID_LEN];
-
-	self_thread_id = pthread_self();
-	#ifdef ENABLE_LOGGING
+	
+	#ifdef ENABLE_THREAD_LOGGING
+		pthread_t self_thread_id;
+		self_thread_id = pthread_self();
 		fprintf(stdout, "[MANAGE CLIENT THREAD 0x%x] Created manage client thread\n", (unsigned int)self_thread_id);
 	#endif
 
@@ -432,7 +421,8 @@ void *thread_pool_manager_thread_thread(void *ptr)
 			ct_descript_node = thread_pools[i].last_ct;
 			ct_descript_node_prev = NULL;
 			if(ct_descript_node == NULL) {
-				#ifdef ENABLE_LOGGING
+				#ifdef ENABLE_THREAD_LOGGING
+					char pool_id_buf[POOL_ID_LEN];
 					get_thread_pool_id_from_index(i, pool_id_buf);
 					fprintf(stdout, "[MANAGE CLIENT THREAD 0x%x] Found no client threads to manage for thread pool = %s\n", (unsigned int)self_thread_id, pool_id_buf);
 				#endif
@@ -440,7 +430,7 @@ void *thread_pool_manager_thread_thread(void *ptr)
 				while(ct_descript_node != NULL) {
 					ret = pthread_tryjoin_np(ct_descript_node->thread_id, &res);
 					if(ret != 0) {
-						#ifdef ENABLE_LOGGING
+						#ifdef ENABLE_THREAD_LOGGING
 							fprintf(stdout, "[MANAGE CLIENT THREAD 0x%x] Found client thread with id=0x%x still active\n", (unsigned int)self_thread_id, (unsigned int)ct_descript_node->thread_id);
 						#endif
 
@@ -448,7 +438,7 @@ void *thread_pool_manager_thread_thread(void *ptr)
 						ct_descript_node_prev = ct_descript_node;
 						ct_descript_node = ct_descript_node->next;
 					} else {
-						#ifdef ENABLE_LOGGING
+						#ifdef ENABLE_THREAD_LOGGING
 							fprintf(stdout, "[MANAGE CLIENT THREAD 0x%x] Joined with client thread with id=0x%x\n", (unsigned int)self_thread_id, (unsigned int)ct_descript_node->thread_id);
 						#endif
 
@@ -470,7 +460,7 @@ void *thread_pool_manager_thread_thread(void *ptr)
 						}
 						if(thread_pools[i].num_active_client_threads != 0) {
 							thread_pools[i].num_active_client_threads--;
-							#ifdef ENABLE_LOGGING
+							#ifdef ENABLE_THREAD_LOGGING
 								fprintf(stdout, "[MSG CONNECTION HANDLER THREAD] New number of active client threads: %u\n", thread_pools[i].num_active_client_threads);
 							#endif
 						}
@@ -491,22 +481,23 @@ void *handle_msg_client_thread(void *ptr)
 	int i, ret, bytes_read, client_socket;
 	char *pthread_ret;
 	pthread_t self_thread_id;
-	unsigned char packet_data_encrypted[PACKET_SIZE_BYTES], packet_data_decrypted[PACKET_SIZE_BYTES];
-	unsigned char payload_data_decrypted[PACKET_SIZE_BYTES], packet_data[PACKET_SIZE_BYTES];
+	unsigned char packet_data_encrypted[packet_size_bytes], packet_data_decrypted[packet_size_bytes];
+	unsigned char payload_data_decrypted[packet_size_bytes], packet_data[packet_size_bytes];
 	onion_route_data *or_data_ptr, *or_payload_data_ptr;
 	onion_route_data *or_data_decrypted_ptr, *or_payload_data_decrypted_ptr;
 	char thread_id_buf[64];
 	key or_key;
 	struct in_addr next_addr;
+	payload_data *pd_ptr;
 
 	self_thread_id = pthread_self();
 	sprintf(thread_id_buf, "[MSG CLIENT THREAD 0x%x]", (unsigned int)self_thread_id);
-	#ifdef ENABLE_LOGGING
+	#ifdef ENABLE_THREAD_LOGGING
 		fprintf(stdout, "%s Created new client thread\n", thread_id_buf);
 	#endif
 
 	if(ptr == NULL) {
-		#ifdef ENABLE_LOGGING
+		#ifdef ENABLE_THREAD_LOGGING
 			fprintf(stdout, "%s Handle client thread created with null arguments\n", thread_id_buf);
 		#endif
 
@@ -517,14 +508,14 @@ void *handle_msg_client_thread(void *ptr)
 
 	bytes_read = 0;
 	for(i = 0; i < NUM_READ_ATTEMPTS; i++) {
-		bytes_read += read(client_socket, (packet_data_encrypted + bytes_read), (PACKET_SIZE_BYTES - bytes_read));
+		bytes_read += read(client_socket, (packet_data_encrypted + bytes_read), (packet_size_bytes - bytes_read));
 		if(bytes_read < 0)
 			break;
 	}
 	handle_pthread_bytesread(bytes_read, client_socket);
 	#ifdef PRINT_PACKETS
 		fprintf(stdout, "\n ------------------------------------------------------------ \n\n");
-		for (i = 0; i < PACKET_SIZE_BYTES; ++i) {
+		for (i = 0; i < packet_size_bytes; ++i) {
 			fprintf(stdout, "%02x", packet_data_encrypted[i]);
 		}
 		fprintf(stdout, "\n\n ------------------------------------------------------------ \n");
@@ -551,25 +542,33 @@ void *handle_msg_client_thread(void *ptr)
 	handle_pthread_ret(ret, client_socket);
 	remove_key_from_key_store(thread_id_buf, or_payload_data_ptr->uid);
 
-	ret = aes_decrypt_block(thread_id_buf, (unsigned char *)&(or_payload_data_ptr->ord_enc), (PACKET_SIZE_BYTES - payload_start_byte - cipher_text_byte_offset), 
+	ret = aes_decrypt_block(thread_id_buf, (unsigned char *)&(or_payload_data_ptr->ord_enc), (packet_size_bytes - payload_start_byte - cipher_text_byte_offset), 
 								(unsigned char *)or_key.value, AES_KEY_SIZE_BYTES, or_payload_data_ptr->iv, (payload_data_decrypted + cipher_text_byte_offset));
 	handle_pthread_ret(ret, client_socket);
 
 	ret = set_key_for_user_id(thread_id_buf, or_payload_data_decrypted_ptr->ord_enc.new_uid, (key *)&(or_payload_data_decrypted_ptr->ord_enc.new_key));
 	handle_pthread_ret(ret, client_socket);
 	
-	ret = fill_buf_with_random_data(packet_data, PACKET_SIZE_BYTES);
+	ret = fill_buf_with_random_data(packet_data, packet_size_bytes);
 	handle_pthread_ret(ret, client_socket);
 	memcpy(packet_data, (packet_data_decrypted + sizeof(onion_route_data)), (sizeof(onion_route_data) * 2));
-	memcpy((packet_data + payload_start_byte), (payload_data_decrypted + sizeof(onion_route_data)), (PACKET_SIZE_BYTES - payload_start_byte));
+	memcpy((packet_data + payload_start_byte), (payload_data_decrypted + sizeof(onion_route_data)), (packet_size_bytes - payload_start_byte - sizeof(onion_route_data)));
 
-	next_addr.s_addr = or_data_decrypted_ptr->ord_enc.next_pkg_ip;
-	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "%s Found next ip = %s, port = %u\n", thread_id_buf, inet_ntoa(next_addr), or_data_decrypted_ptr->ord_enc.next_pkg_port);
-	#endif
-	send_packet_to_relay(packet_data, inet_ntoa(next_addr), or_data_decrypted_ptr->ord_enc.next_pkg_port);
+	if(or_data_decrypted_ptr->ord_enc.next_pkg_ip == 0) {
+		pd_ptr = (payload_data *)(packet_data + payload_start_byte);
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Received non-route packet, type = %s\n", thread_id_buf, get_string_for_payload_type(pd_ptr->type));
+		#endif
+	} else {
+		next_addr.s_addr = or_data_decrypted_ptr->ord_enc.next_pkg_ip;
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Found next ip = %s, port = %u\n", thread_id_buf, inet_ntoa(next_addr), or_data_decrypted_ptr->ord_enc.next_pkg_port);
+		#endif
 
-	#ifdef ENABLE_LOGGING
+		send_packet_to_relay(packet_data, inet_ntoa(next_addr), or_data_decrypted_ptr->ord_enc.next_pkg_port);
+	}
+
+	#ifdef ENABLE_THREAD_LOGGING
 		fprintf(stdout, "%s Client thread exit\n", thread_id_buf);
 	#endif
 
@@ -584,17 +583,17 @@ void *handle_id_cache_thread(void *ptr)
 	int client_socket;
 	char *pthread_ret;
 	pthread_t self_thread_id;
-	unsigned char packet_data_encrypted[PACKET_SIZE_BYTES], packet_data[PACKET_SIZE_BYTES];
+	unsigned char packet_data_encrypted[packet_size_bytes], packet_data[packet_size_bytes];
 	id_cache_data *id_data;
 	char buf[64];
 
 	self_thread_id = pthread_self();
-	#ifdef ENABLE_LOGGING
+	#ifdef ENABLE_THREAD_LOGGING
 		fprintf(stdout, "[ID CACHE CLIENT THREAD 0x%x] Created new client thread\n", (unsigned int)self_thread_id);
 	#endif
 
 	if(ptr == NULL) {
-		#ifdef ENABLE_LOGGING
+		#ifdef ENABLE_THREAD_LOGGING
 			fprintf(stdout, "[ID CACHE CLIENT THREAD 0x%x] Handle client thread created with null arguments\n", (unsigned int)self_thread_id);
 		#endif
 
@@ -605,14 +604,14 @@ void *handle_id_cache_thread(void *ptr)
 
 	bytes_read = 0;
 	for(i = 0; i < NUM_READ_ATTEMPTS; i++) {
-		bytes_read += read(client_socket, (packet_data_encrypted + bytes_read), (PACKET_SIZE_BYTES - bytes_read));
+		bytes_read += read(client_socket, (packet_data_encrypted + bytes_read), (packet_size_bytes - bytes_read));
 		if(bytes_read < 0)
 			break;
 	}
 	handle_pthread_bytesread(bytes_read, client_socket);
 	#ifdef PRINT_PACKETS
 		fprintf(stdout, "\n ------------------------------------------------------------ \n\n");
-		for (i = 0; i < PACKET_SIZE_BYTES; ++i) {
+		for (i = 0; i < packet_size_bytes; ++i) {
 			fprintf(stdout, "%02x", packet_data_encrypted[i]);
 		}
 		fprintf(stdout, "\n\n ------------------------------------------------------------ \n");
@@ -633,7 +632,7 @@ void *handle_id_cache_thread(void *ptr)
 	set_key_for_user_id(buf, id_data->relay_user_id, (key *)id_data->aes_key);
 	sem_post(&keystore_sem);
 
-	#ifdef ENABLE_LOGGING
+	#ifdef ENABLE_THREAD_LOGGING
 		fprintf(stdout, "[ID CACHE CLIENT THREAD 0x%x] Client thread exit\n", (unsigned int)self_thread_id);
 	#endif
 
@@ -695,14 +694,14 @@ int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destin
 
 	bytes_sent = 0;
 	for (i = 0; i < MAX_SEND_ATTEMPTS; i++) {
-		bytes_sent += write(cr_socket, (packet + bytes_sent), (PACKET_SIZE_BYTES - bytes_sent));
-		if(bytes_sent == PACKET_SIZE_BYTES) {
+		bytes_sent += write(cr_socket, (packet + bytes_sent), (packet_size_bytes - bytes_sent));
+		if(bytes_sent == packet_size_bytes) {
 			break;
 		}
 	}
 	close(cr_socket);
 
-	if(bytes_sent != PACKET_SIZE_BYTES) {
+	if(bytes_sent != packet_size_bytes) {
 		return -1;
 	}
 	return 0;
@@ -741,7 +740,7 @@ void handle_pthread_bytesread(int bytes_read, int clientfd)
 {
 	char *pthread_ret;
 
-	if(bytes_read != PACKET_SIZE_BYTES) {
+	if(bytes_read != packet_size_bytes) {
 		close(clientfd);
 		pthread_ret = (char *)0;
 		pthread_exit(pthread_ret);
