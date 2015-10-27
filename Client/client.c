@@ -266,7 +266,8 @@ int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 		return -1;
 	}
 
-	send_dummy_packet_no_return_route(ci_out);
+	//send_dummy_packet_no_return_route(ci_out);
+	send_dummy_packet_with_return_route(ci_out);
 
 	return ret;
 }
@@ -583,20 +584,83 @@ int perform_user_id_registration(conversation_info *ci_info)
 	return 0;
 }
 
-int send_dummy_packet_no_return_route(conversation_info *ci_info)
+int generate_random_route(conversation_info *ci_info, route_info *r_info)
 {
-	int ret, num_routed;
+	int num_routed;
 	unsigned int seed_val, index;
-	route_info r_info;
 	char index_of_relays_used[RELAY_POOL_MAX_SIZE];
-	payload_data dummy_packet_payload;
 
-	if(ci_info == NULL) {
+	if((ci_info == NULL) || (r_info == NULL)) {
 		return -1;
 	}
 
 	memset(index_of_relays_used, 0, RELAY_POOL_MAX_SIZE);
 	seed_val = (((unsigned int)user_id[1])<<24) | (((unsigned int)user_id[0])<<16) | (((unsigned int)user_id[3])<<8) | ((unsigned int)user_id[2]);
+
+	r_info->relay_route[0] = ci_info->index_of_entry_relay;
+	r_info->route_length = MIN_ROUTE_LENGTH + (get_pseudo_random_number(seed_val) % (MAX_ROUTE_LENGTH - (MIN_ROUTE_LENGTH - 1)));
+
+	num_routed = 1;
+	while(num_routed < r_info->route_length) {
+		index = get_pseudo_random_number(seed_val);
+		seed_val ^= index;
+
+		index %= RELAY_POOL_MAX_SIZE;
+		if((ci_info->ri_pool[index].is_active == 1) && (index != ci_info->index_of_entry_relay)) {
+			if(index_of_relays_used[index] == 0) {
+				r_info->relay_route[num_routed] = index;
+
+				index_of_relays_used[index] = 1;
+				num_routed++;
+			}
+		}
+	}
+
+	return 0;
+}
+
+int generate_random_return_route(conversation_info *ci_info, route_info *r_info, route_info *return_r_info)
+{
+	unsigned int seed_val, index;
+
+	if((ci_info == NULL) || (r_info == NULL) || (return_r_info == NULL)) {
+		return -1;
+	}
+
+	seed_val = (((unsigned int)user_id[1])<<24) | (((unsigned int)user_id[0])<<16) | (((unsigned int)user_id[3])<<8) | ((unsigned int)user_id[2]);
+
+	return_r_info->route_length = MIN_ROUTE_LENGTH + (get_pseudo_random_number(seed_val) % (MAX_ROUTE_LENGTH - (MIN_ROUTE_LENGTH - 1)));
+	if(return_r_info->route_length == 2) {
+		return_r_info->relay_route[0] = ci_info->index_of_entry_relay;
+	} else {
+		return_r_info->relay_route[1] = ci_info->index_of_entry_relay;
+
+		while(1) {
+			index = get_pseudo_random_number(seed_val);
+			seed_val ^= index;
+
+			index %= RELAY_POOL_MAX_SIZE;
+			if((ci_info->ri_pool[index].is_active == 1) && (index != ci_info->index_of_entry_relay)) {
+				if(index != r_info->relay_route[(r_info->route_length - 1)]) {
+					return_r_info->relay_route[0] = index;
+					break;
+				}
+			}
+		}
+	}
+
+	return 0;
+}
+
+int send_dummy_packet_no_return_route(conversation_info *ci_info)
+{
+	int ret;
+	route_info r_info;
+	payload_data dummy_packet_payload;
+
+	if(ci_info == NULL) {
+		return -1;
+	}
 
 	ret = fill_buf_with_random_data((unsigned char *)&dummy_packet_payload, sizeof(dummy_packet_payload));
 	if(ret < 0) {
@@ -604,29 +668,62 @@ int send_dummy_packet_no_return_route(conversation_info *ci_info)
 	}
 	dummy_packet_payload.type = DUMMY_PACKET_NO_RETURN_ROUTE;
 
-	r_info.relay_route[0] = ci_info->index_of_entry_relay;
-	r_info.route_length = MIN_ROUTE_LENGTH + (get_pseudo_random_number(seed_val) % (MAX_ROUTE_LENGTH - (MIN_ROUTE_LENGTH - 1)));
-
-	num_routed = 1;
-	while(num_routed < r_info.route_length) {
-		index = get_pseudo_random_number(seed_val);
-		seed_val ^= index;
-
-		index %= RELAY_POOL_MAX_SIZE;
-		if((ci_info->ri_pool[index].is_active == 1) && (index != ci_info->index_of_entry_relay)) {
-			if(index_of_relays_used[index] == 0) {
-				r_info.relay_route[num_routed] = index;
-
-				index_of_relays_used[index] = 1;
-				num_routed++;
-			}
-		}
+	ret = generate_random_route(ci_info, &r_info);
+	if(ret < 0) {
+		return -1;
 	}
 	#ifdef ENABLE_LOGGING
 		int i;
 		fprintf(stdout, "[MAIN THREAD] Sending dummy packet with route length = %u\n", r_info.route_length);
 		for (i = 0; i < r_info.route_length; i++) {
 			fprintf(stdout, "[MAIN THREAD] Route %u, index = %u, ip = %s\n", (i + 1), r_info.relay_route[i], ci_info->ri_pool[r_info.relay_route[i]].relay_ip);	
+		}
+	#endif
+	
+	ret = send_packet(DUMMY_PACKET, ci_info, &r_info, &dummy_packet_payload, NULL);
+	if(ret < 0) {
+		return -1;
+	}
+
+	return 0;
+}
+
+int send_dummy_packet_with_return_route(conversation_info *ci_info)
+{
+	int ret;
+	route_info r_info, return_r_info;
+	payload_data dummy_packet_payload;
+
+	if(ci_info == NULL) {
+		return -1;
+	}
+
+	ret = fill_buf_with_random_data((unsigned char *)&dummy_packet_payload, sizeof(dummy_packet_payload));
+	if(ret < 0) {
+		return -1;
+	}
+	dummy_packet_payload.type = DUMMY_PACKET_W_RETURN_ROUTE;
+
+	ret = generate_random_route(ci_info, &r_info);
+	if(ret < 0) {
+		return -1;
+	}
+	#ifdef ENABLE_LOGGING
+		int i;
+		fprintf(stdout, "[MAIN THREAD] Sending dummy packet with route length = %u\n", r_info.route_length);
+		for (i = 0; i < r_info.route_length; i++) {
+			fprintf(stdout, "[MAIN THREAD] Route %u, index = %u, ip = %s\n", (i + 1), r_info.relay_route[i], ci_info->ri_pool[r_info.relay_route[i]].relay_ip);	
+		}
+	#endif
+
+	ret = generate_random_return_route(ci_info, &r_info, &return_r_info);
+	if(ret < 0) {
+		return -1;
+	}
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "[MAIN THREAD] Return route length = %u\n", return_r_info.route_length);
+		for (i = 0; i < return_r_info.route_length - 1; i++) { // TODO
+			fprintf(stdout, "[MAIN THREAD] Return route %u, index = %u, ip = %s\n", (i + 1), return_r_info.relay_route[i], ci_info->ri_pool[return_r_info.relay_route[i]].relay_ip);	
 		}
 	#endif
 	

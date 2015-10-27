@@ -115,6 +115,7 @@ int is_valid_ip(char *ip, int *valid /* out */);
 int print_conversation(char *thread_id, conversation_info *ci_info);
 char* get_packet_type_str(packet_type type);
 int send_dummy_packet_no_return_route(conversation_info *ci_info);
+int send_dummy_packet_with_return_route(conversation_info *ci_info);
 int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_info *r_info, unsigned char *packet);
 int generate_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */);
 int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info, payload_data *payload, void *other);
