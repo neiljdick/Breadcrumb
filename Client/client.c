@@ -390,6 +390,8 @@ int get_relay_public_certificates_debug(conversation_info *ci_info)
 			fprintf(stdout, "[MAIN THREAD] Successfully read public certificate from relay, id = '%s', ip = '%s'\n", ci_info->ri_pool[i].relay_id, ci_info->ri_pool[i].relay_ip);
 		#endif
 
+		sprintf(relay_cert_file_name, "./%s", public_cert_dir);
+		mkdir(relay_cert_file_name, S_IRWXU | S_IRWXG);
 		sprintf(relay_cert_file_name, "%s/.pubkey_%s", public_cert_dir, ci_info->ri_pool[i].relay_id);
 		fp_public_key = fopen(relay_cert_file_name, "w");
 		if(fp_public_key == NULL) {
