@@ -7,6 +7,7 @@ key_entry *key_store = NULL;
 
 unsigned int max_user_id, key_storage_size, num_keystore_clash_heaps;
 unsigned long ram_available_for_keystore_mb;
+unsigned int g_user_id;
 int ks_fd[MAX_KEY_CLASH_PERMITTED];
 char *curr_ks_clash_addr;
 off_t pa_offset;
@@ -22,7 +23,10 @@ int main(int argc, char const *argv[])
 	fprintf(stdout, "[DEBUG MODE] Begin\n");
 	fprintf(stdout, "[DEBUG MODE] Size of key entry: %lu\n", sizeof(key_entry));
 
-	init_key_store("[DEBUG MODE]");
+	ret = init_key_store("[DEBUG MODE]", SOFT);
+	if(ret < 0) {
+		return -1;
+	}
 
 	memset(debug_key.value, 0x30, AES_KEY_SIZE_BYTES);
 	set_key_for_user_id("[DEBUG MODE]", 22045, &debug_key);
@@ -51,6 +55,10 @@ int main(int argc, char const *argv[])
 
 	get_key_for_user_id("[DEBUG MODE]", 22045, -1, &debug_key);
 	get_key_for_user_id("[DEBUG MODE]", 22045, 0, &debug_key);
+
+	get_key_for_user_id("[DEBUG MODE]", 22046, -1, &debug_key);
+	get_key_for_user_id("[DEBUG MODE]", 22046, 0, &debug_key);
+	swap_current_mapping_to_ram("[DEBUG MODE]");
 	get_key_for_user_id("[DEBUG MODE]", 22046, -1, &debug_key);
 	get_key_for_user_id("[DEBUG MODE]", 22046, 0, &debug_key);
 
@@ -61,7 +69,7 @@ int main(int argc, char const *argv[])
 
 #endif
 
-int init_key_store(char *thread_id)
+int init_key_store(char *thread_id, init_type i_type)
 {
 	int ret;
 
@@ -74,7 +82,7 @@ int init_key_store(char *thread_id)
 		return -1;
 	}
 
-	ret = init_key_storage_memory(thread_id);
+	ret = init_key_storage_memory(thread_id, i_type);
 	if(ret < 0) {
 		return -1;
 	}
@@ -107,6 +115,7 @@ int init_globals(char *thread_id)
 	ram_available_for_keystore_mb = 0;
 	num_keystore_clash_heaps = 0;
 	curr_ks_clash_addr = NULL;
+	g_user_id = 0;
 
 	for (i = 0; i < MAX_KEY_CLASH_PERMITTED; ++i) {
 		ks_fd[i] = -1;
@@ -115,15 +124,17 @@ int init_globals(char *thread_id)
 	return 0;
 }
 
-static int init_key_storage_memory(char *thread_id)
+static int init_key_storage_memory(char *thread_id, init_type i_type)
 {
-	const int empty_key_buf_size = 100;
-	int ret, i, j;
+	int ret, i;
+	unsigned int j;
 	unsigned long ram_free_mb, max_num_keys_can_store;
 	unsigned long disk_free_mb, disk_space_required_mb;
 	unsigned int key_entry_size;
 	float attempting_usage_ratio;
-	char buf[64], empty_key_buf[sizeof(key_entry) * empty_key_buf_size];
+	const unsigned int empty_ke_buf_len = 1000;
+	char buf[64], empty_key_entry_buf[sizeof(key_entry) * empty_ke_buf_len];
+	unsigned int empty_key_entry_count, empty_key_entry_count_overflow;
 	int num_empty_key_to_write;
 	key_entry empty_key_entry;
 
@@ -148,9 +159,6 @@ static int init_key_storage_memory(char *thread_id)
 		#endif
 
 		max_user_id = (ram_available_for_keystore_mb * (1024*1024)) / ((unsigned long)sizeof(key_entry));
-		max_user_id += 0x80;
-		max_user_id &= (~((unsigned int)0xFF));
-
 		key_store = calloc(max_user_id, sizeof(key_entry));
 		if(key_store != NULL) {
 			break;	
@@ -187,11 +195,12 @@ static int init_key_storage_memory(char *thread_id)
 	fflush(stdout);
 	sprintf(buf, "./%s", key_storage_dir);
 	mkdir(buf, S_IRWXU | S_IRWXG);
-	num_empty_key_to_write = (ram_available_for_keystore_mb * (1024*1024)) / sizeof(empty_key_buf);
 	memset(&(empty_key_entry.p_key), 0, sizeof(key));
 	empty_key_entry.age = -1;
-	for (i = 0; i < empty_key_buf_size; ++i) {
-		memcpy(empty_key_buf + (sizeof(key_entry) * i), &empty_key_entry, sizeof(key_entry));
+	empty_key_entry_count = (max_user_id * sizeof(key_entry)) / sizeof(empty_key_entry_buf);
+	empty_key_entry_count_overflow = max_user_id % sizeof(empty_key_entry_buf);
+	for (i = 0; i < empty_ke_buf_len; ++i) {
+		memcpy(empty_key_entry_buf + (sizeof(key_entry) * i), &empty_key_entry, sizeof(key_entry));
 	}
 	for (i = 0; i < num_keystore_clash_heaps; ++i) {
 		if(i >= MAX_KEY_CLASH_PERMITTED) {
@@ -199,19 +208,28 @@ static int init_key_storage_memory(char *thread_id)
 		}
 
 		sprintf(buf, "./%s/_chp.%u", key_storage_dir, i);
-		ks_fd[i] = open(buf, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
+		if(i_type == SOFT) {
+			ks_fd[i] = open(buf, O_RDWR | S_IRUSR | S_IWUSR);
+			if(ks_fd[i] >= 0) {
+				continue;
+			}
+		}
+		ks_fd[i] = open(buf, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);	
 		if(ks_fd[i] < 0) {
 			free_key_store(thread_id);
 			return -1;
 		}
 
-		for (j = 0; j < num_empty_key_to_write; ++j) {
-			write(ks_fd[i], empty_key_buf, sizeof(empty_key_buf));
-			if((j % 20000) == 0) {
+		for (j = 0; j < empty_key_entry_count; ++j) {
+			write(ks_fd[i], &empty_key_entry_buf, sizeof(empty_key_entry_buf));
+			if((j % 1000) == 0) {
 				fsync(ks_fd[i]);
 				fprintf(stdout, ".");
 				fflush(stdout);
 			}
+		}
+		for (j = 0; j < empty_key_entry_count_overflow; ++j) {
+			write(ks_fd[i], &empty_key_entry, sizeof(empty_key_entry));
 		}
 		fsync(ks_fd[i]);
 	}
@@ -255,7 +273,11 @@ static int handle_key_entry_age_increment(char *thread_id)
 
 	ke_ptr = (key_store);
 	for (i = 0; i < max_user_id; i++) {
-		ke_ptr->age++;
+		if(ke_ptr->age < 0) {
+			ke_ptr->age++;
+		} else if(ke_ptr->age > MAX_KEY_ENTRY_AGE) {
+			ke_ptr->age = -1;
+		}
 		ke_ptr++;
 	}
 
@@ -283,6 +305,46 @@ static int free_key_store(char *thread_id)
 	return 0;
 }
 
+int swap_current_mapping_to_ram(char *thread_id)
+{
+	key_entry *ram_ke_ptr, *disk_ke_ptr;
+	key_entry tmp_entry;
+	#ifdef ENABLE_LOGGING
+		struct timeval res, t1, t2;
+		gettimeofday(&t1, NULL);
+	#endif
+
+	if(key_store == NULL) {
+		return -1;
+	}
+	if(g_user_id > max_user_id) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Failed to set key, user ID (%u) must be less than key storage size (%u)\n", thread_id, g_user_id, max_user_id);
+		#endif
+
+		return -1;
+	}
+	if(curr_ks_clash_addr == NULL) {
+		return -1;
+	}
+
+	ram_ke_ptr = (key_store + g_user_id);
+	disk_ke_ptr = (key_entry *)(curr_ks_clash_addr + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
+
+	memcpy(&tmp_entry, ram_ke_ptr, sizeof(key_entry));
+	memcpy(ram_ke_ptr, disk_ke_ptr, sizeof(key_entry));
+	ram_ke_ptr->age = 0;
+	memcpy(disk_ke_ptr, &tmp_entry, sizeof(key_entry));
+
+	#ifdef ENABLE_LOGGING
+		gettimeofday(&t2, NULL);
+		timeval_subtract(&res, &t2, &t1);
+		fprintf(stdout, "%s Successfully swapped entries for user = %u, time taken: %lu us\n", thread_id, g_user_id, res.tv_usec);
+	#endif
+
+	return 0;
+}
+
 int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
 {
 	int i, j;
@@ -303,11 +365,14 @@ int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
 
 		return -1;
 	}
+
+	g_user_id = user_id;
 	if(curr_ks_clash_addr != NULL) {
-		munmap(curr_ks_clash_addr, sizeof(key_entry) + ((off_t)user_id * sizeof(key_entry)) - pa_offset);
+		munmap(curr_ks_clash_addr, sizeof(key_entry) + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
+		curr_ks_clash_addr = NULL;
 	}
 
-	ke_ptr = (key_store + user_id);
+	ke_ptr = (key_store + g_user_id);
 	if(ke_ptr->age < 0) {
 		memcpy(&(ke_ptr->p_key), key_in, sizeof(key));
 		ke_ptr->age = 0;
@@ -320,8 +385,8 @@ int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
 				continue;
 			}
 
-			pa_offset = ((off_t)user_id * sizeof(key_entry)) & ~(sysconf(_SC_PAGE_SIZE) - 1);
-			curr_ks_clash_addr = mmap(NULL, sizeof(key_entry) + ((off_t)user_id * sizeof(key_entry)) - pa_offset, PROT_WRITE, MAP_SHARED, ks_fd[i], pa_offset);
+			pa_offset = ((off_t)g_user_id * sizeof(key_entry)) & ~(sysconf(_SC_PAGE_SIZE) - 1);
+			curr_ks_clash_addr = mmap(NULL, sizeof(key_entry) + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset, PROT_READ | PROT_WRITE, MAP_SHARED, ks_fd[i], pa_offset);
     		if(curr_ks_clash_addr == MAP_FAILED) {
     			#ifdef ENABLE_LOGGING
 					fprintf(stdout, "%s Failed to mmap key storage clash file (%u)\n", thread_id, i);
@@ -330,23 +395,16 @@ int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
 				return -1;
     		}
 
-    		ke_ptr = (key_entry *)(curr_ks_clash_addr + ((off_t)user_id * sizeof(key_entry)) - pa_offset);
+    		ke_ptr = (key_entry *)(curr_ks_clash_addr + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
     		if(ke_ptr->age < 0) {
     			memcpy(&(ke_ptr->p_key), key_in, sizeof(key));
 				ke_ptr->age = 0;
-    			munmap(curr_ks_clash_addr, sizeof(key_entry) + ((off_t)user_id * sizeof(key_entry)) - pa_offset);
+    			munmap(curr_ks_clash_addr, sizeof(key_entry) + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
     			curr_ks_clash_addr = NULL;
 
     			break;
-    		} else {
-    			#ifdef ENABLE_LOGGING
-					for(j = 0; j < AES_KEY_SIZE_BYTES; j++) {
-						fprintf(stdout, "%02x", (0xff & ke_ptr->p_key.value[j]));
-					}
-					fprintf(stdout, "\n");
-				#endif
-			}
-    		munmap(curr_ks_clash_addr, sizeof(key_entry) + ((off_t)user_id * sizeof(key_entry)) - pa_offset);
+    		}
+    		munmap(curr_ks_clash_addr, sizeof(key_entry) + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
     		curr_ks_clash_addr = NULL;
 		}
 		if(i >= num_keystore_clash_heaps) {
@@ -390,12 +448,15 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 	if(backup_index >= (int)num_keystore_clash_heaps) {
 		return -1;
 	}
+
+	g_user_id = user_id;
 	if(curr_ks_clash_addr != NULL) {
-		munmap(curr_ks_clash_addr, sizeof(key_entry) + ((off_t)user_id * sizeof(key_entry)) - pa_offset);
+		munmap(curr_ks_clash_addr, sizeof(key_entry) + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
+		curr_ks_clash_addr = NULL;
 	}
 
 	if(backup_index < 0) {
-		ke_ptr = (key_store + user_id);
+		ke_ptr = (key_store + g_user_id);
 		if(ke_ptr->age < 0) {
 			key_out = NULL;
 		} else {
@@ -406,8 +467,8 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 			return -1;
 		}
 
-		pa_offset = ((off_t)user_id * sizeof(key_entry)) & ~(sysconf(_SC_PAGE_SIZE) - 1);
-		curr_ks_clash_addr = mmap(NULL, sizeof(key_entry) + ((off_t)user_id * sizeof(key_entry)) - pa_offset, PROT_READ, MAP_SHARED, ks_fd[backup_index], pa_offset);
+		pa_offset = ((off_t)g_user_id * sizeof(key_entry)) & ~(sysconf(_SC_PAGE_SIZE) - 1);
+		curr_ks_clash_addr = mmap(NULL, sizeof(key_entry) + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset, PROT_WRITE, MAP_SHARED, ks_fd[backup_index], pa_offset);
 		if(curr_ks_clash_addr == MAP_FAILED) {
 			#ifdef ENABLE_LOGGING
 				fprintf(stdout, "%s Failed to mmap key storage clash file (%u)\n", thread_id, backup_index);
@@ -416,7 +477,7 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 			return -1;
 		}
 
-		ke_ptr = (key_entry *)(curr_ks_clash_addr + ((off_t)user_id * sizeof(key_entry)) - pa_offset);
+		ke_ptr = (key_entry *)(curr_ks_clash_addr + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
 		if(ke_ptr->age < 0) {
 			key_out = NULL;
 		} else {
@@ -435,7 +496,7 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 		} else {
 			fprintf(stdout, "NULL");
 		}
-		fprintf(stdout, " for user = %u. Time taken: %lu us\n", user_id, res.tv_usec);
+		fprintf(stdout, " for user = %u, at index: %u. Time taken: %lu us\n", g_user_id, (backup_index + 1), res.tv_usec);
 	#endif
 
 	return 0;
@@ -443,7 +504,7 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 
 int get_max_user_id(void)
 {
-	init_key_store("[MAIN THREAD]");
+	init_key_store("[MAIN THREAD]", SOFT);
 
 	return max_user_id;
 }
