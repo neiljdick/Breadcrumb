@@ -636,13 +636,14 @@ void *handle_id_cache_thread(void *ptr)
 	char buf[64];
 
 	self_thread_id = pthread_self();
+	sprintf(buf, "[ID CACHE CLIENT THREAD 0x%x]", (unsigned int)self_thread_id);
 	#ifdef ENABLE_THREAD_LOGGING
-		fprintf(stdout, "[ID CACHE CLIENT THREAD 0x%x] Created new client thread\n", (unsigned int)self_thread_id);
+		fprintf(stdout, "%s Created new client thread\n", buf);
 	#endif
 
 	if(ptr == NULL) {
 		#ifdef ENABLE_THREAD_LOGGING
-			fprintf(stdout, "[ID CACHE CLIENT THREAD 0x%x] Handle client thread created with null arguments\n", (unsigned int)self_thread_id);
+			fprintf(stdout, "%s Handle client thread created with null arguments\n", buf);
 		#endif
 
 		pthread_ret = (char *)-1;
@@ -668,24 +669,20 @@ void *handle_id_cache_thread(void *ptr)
 	RSA_private_decrypt(RSA_KEY_LENGTH_BYTES, (packet_data_encrypted + payload_start_byte), packet_data, rsa, RSA_PKCS1_OAEP_PADDING);
 	id_data = ((id_cache_data *)packet_data);
 	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "[ID CACHE CLIENT THREAD 0x%x] Received id cache data, user id = %d, key = ", (unsigned int)self_thread_id, (unsigned int)id_data->relay_user_id);
-		for(i = 0; i < AES_KEY_SIZE_BYTES; i++) {
-			fprintf(stdout, "%02x", (0xff & id_data->aes_key[i]));
-		}
-		fprintf(stdout, "\n");
+		fprintf(stdout, "%s Received id cache data\n", buf);
 	#endif
 
 	sem_wait(&keystore_sem);
-	sprintf(buf, "[ID CACHE CLIENT THREAD 0x%x]", (unsigned int)self_thread_id);
 	set_key_for_user_id(buf, id_data->relay_user_id, (key *)id_data->aes_key);
+	set_key_for_user_id(buf, id_data->payload_relay_user_id, (key *)id_data->payload_aes_key);
+	set_key_for_user_id(buf, id_data->return_route_user_id, (key *)id_data->return_route_aes_key);
+	set_key_for_user_id(buf, id_data->return_route_payload_user_id, (key *)id_data->return_route_payload_aes_key);
 	sem_post(&keystore_sem);
 
 	#ifdef ENABLE_THREAD_LOGGING
-		fprintf(stdout, "[ID CACHE CLIENT THREAD 0x%x] Client thread exit\n", (unsigned int)self_thread_id);
+		fprintf(stdout, "%s Client thread exit\n", buf);
 	#endif
 
-
-	// TODO don't forget to delete keys from keystore after timeout!
 	// TODO need to prevent flood of new keys from non relay client! Make sure only 1 packet / 3 sec from same IP
 
 	close(client_socket);

@@ -47,10 +47,8 @@ char *program_name = "Client";
 const char *public_cert_dir = ".relay_certs";
 
 typedef enum {
-	REGISTER_USER_ID_WITH_ENTRY_RELAY = 0,
-	REGISTER_PAYLOAD_USER_ID_WITH_ENTRY_RELAY,
-	REGISTER_USER_ID_WITH_RELAY,
-	REGISTER_PAYLOAD_USER_ID_WITH_RELAY,
+	REGISTER_UIDS_WITH_ENTRY_RELAY = 0,
+	REGISTER_UIDS_WITH_RELAY,
 	DUMMY_PACKET
 } packet_type;
 
@@ -70,6 +68,10 @@ typedef struct relay_info
 	unsigned int relay_user_id;
 	unsigned char payload_aes_key[AES_KEY_SIZE_BYTES];
 	unsigned int payload_relay_user_id;
+	unsigned char return_route_aes_key[AES_KEY_SIZE_BYTES];
+	unsigned int return_route_user_id;
+	unsigned char return_route_payload_aes_key[AES_KEY_SIZE_BYTES];
+	unsigned int return_route_payload_user_id;
 	RSA *public_cert;
 } relay_info;
 

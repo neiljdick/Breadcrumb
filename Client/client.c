@@ -245,13 +245,15 @@ int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 		
 		sprintf(ci_out->conversation_name, "debug_mode_convo_%u", debug_convo_count++);
 		memcpy(ci_out->friend_name, friend_name, strlen(friend_name));
-		ci_out->index_of_server_relay = 2;
-		strcpy(ci_out->ri_pool[0].relay_ip, "10.10.6.201");
-		strcpy(ci_out->ri_pool[1].relay_ip, "10.10.6.202");
-		strcpy(ci_out->ri_pool[2].relay_ip, "10.10.6.220");
+		ci_out->index_of_server_relay = 3;
+		strcpy(ci_out->ri_pool[0].relay_ip, "10.10.6.200");
+		strcpy(ci_out->ri_pool[1].relay_ip, "10.10.6.201");
+		strcpy(ci_out->ri_pool[2].relay_ip, "10.10.6.202");
+		strcpy(ci_out->ri_pool[3].relay_ip, "10.10.6.220");
 		ci_out->ri_pool[0].is_active = 1;
 		ci_out->ri_pool[1].is_active = 1;
 		ci_out->ri_pool[2].is_active = 1;
+		ci_out->ri_pool[3].is_active = 1;
 
 		ret = get_relay_public_certificates_debug(ci_out);
 		if(ret < 0) {
@@ -260,7 +262,12 @@ int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 
 	#endif
 
-	//check_validity_of_conversation(&convo_valid); // TODO
+	/*  TODO - Check enough nodes (minimum 3 including server node)
+	 *  Check no two nodes have IP address within same subnet (lower 10 bits or something)
+	 *  Check no two nodes have same public cert
+	 *  Check no two nodes have same id
+	 */ 
+	//check_validity_of_conversation(&convo_valid);
 
 	ret = set_entry_relay_for_conversation(ci_out);
 	if(ret < 0) {
@@ -502,6 +509,14 @@ int set_relay_keys_for_conversation(conversation_info *ci_info)
 			if(ret < 0) {
 				return -1;
 			}
+			ret = generate_AES_key(ci_info->ri_pool[i].return_route_aes_key, AES_KEY_SIZE_BYTES);
+			if(ret < 0) {
+				return -1;
+			}
+			ret = generate_AES_key(ci_info->ri_pool[i].return_route_payload_aes_key, AES_KEY_SIZE_BYTES);
+			if(ret < 0) {
+				return -1;
+			}
 		}
 	}
 
@@ -520,6 +535,8 @@ int set_user_ids_for_conversation(conversation_info *ci_info)
 		if(ci_info->ri_pool[i].is_active) {
 			generate_new_user_id(ci_info, i, &(ci_info->ri_pool[i].relay_user_id));
 			generate_new_user_id(ci_info, i, &(ci_info->ri_pool[i].payload_relay_user_id));
+			generate_new_user_id(ci_info, i, &(ci_info->ri_pool[i].return_route_user_id));
+			generate_new_user_id(ci_info, i, &(ci_info->ri_pool[i].return_route_payload_user_id));
 		}
 	}
 
@@ -572,13 +589,9 @@ int perform_user_id_registration(conversation_info *ci_info)
 		return -1;
 	}
 
-	ret = send_packet(REGISTER_USER_ID_WITH_ENTRY_RELAY, ci_info, NULL, NULL, NULL);
+	ret = send_packet(REGISTER_UIDS_WITH_ENTRY_RELAY, ci_info, NULL, NULL, NULL);
 	if(ret < 0) {
 		return -1;				
-	}
-	ret = send_packet(REGISTER_PAYLOAD_USER_ID_WITH_ENTRY_RELAY, ci_info, NULL, NULL, NULL);
-	if(ret < 0) {
-		return -1;
 	}
 
 	total_active_relays = total_registered_relays = 0;
@@ -596,24 +609,16 @@ int perform_user_id_registration(conversation_info *ci_info)
 		relay_register_index %= RELAY_POOL_MAX_SIZE;
 		if((ci_info->ri_pool[relay_register_index].is_active == 1) && (relay_register_index != ci_info->index_of_entry_relay)) {
 			if(index_of_relays_registered[relay_register_index] == 0) {
-				ret = send_packet(REGISTER_USER_ID_WITH_RELAY, ci_info, NULL,  NULL, &relay_register_index);
+				ret = send_packet(REGISTER_UIDS_WITH_RELAY, ci_info, NULL,  NULL, &relay_register_index);
 				if(ret < 0) {
 					return -1;
 				}
 
 				index_of_relays_registered[relay_register_index]++;
 				total_registered_relays++;
-			} else if(index_of_relays_registered[relay_register_index] == 1) {
-				ret = send_packet(REGISTER_PAYLOAD_USER_ID_WITH_RELAY, ci_info, NULL,  NULL, &relay_register_index);
-				if(ret < 0) {
-					return -1;
-				}
-
-				index_of_relays_registered[relay_register_index]++;
-				total_registered_relays++;
-			}		
+			}	
 		}
-		if(total_registered_relays == (total_active_relays*2)) {
+		if(total_registered_relays == total_active_relays) {
 			break;
 		}
 	}
@@ -825,21 +830,21 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 	}
 
 	switch(type) {
-		case REGISTER_USER_ID_WITH_ENTRY_RELAY:
-		case REGISTER_PAYLOAD_USER_ID_WITH_ENTRY_RELAY:
+		case REGISTER_UIDS_WITH_ENTRY_RELAY:
 			if(ci_info == NULL) {
 				return -1;
 			}
 			memcpy(destination_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, RELAY_IP_MAX_LENGTH);
 			*destination_port = id_cache_port;
 
-			if(type == REGISTER_USER_ID_WITH_ENTRY_RELAY) {
-				memcpy(ic_data.aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].aes_key, AES_KEY_SIZE_BYTES);
-				ic_data.relay_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].relay_user_id;	
-			} else {
-				memcpy(ic_data.aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].payload_aes_key, AES_KEY_SIZE_BYTES);
-				ic_data.relay_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].payload_relay_user_id;
-			}
+			memcpy(ic_data.aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.relay_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].relay_user_id;	
+			memcpy(ic_data.payload_aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].payload_aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.payload_relay_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].payload_relay_user_id;
+			memcpy(ic_data.return_route_aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].return_route_aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.return_route_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].return_route_user_id;
+			memcpy(ic_data.return_route_payload_aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].return_route_payload_aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.return_route_payload_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].return_route_payload_user_id;
 			
 			ret = RSA_public_encrypt(sizeof(id_cache_data), (unsigned char *)&ic_data, (packet + payload_start_byte), ci_info->ri_pool[ci_info->index_of_entry_relay].public_cert, RSA_PKCS1_OAEP_PADDING);
 			if(ret != RSA_KEY_LENGTH_BYTES) {
@@ -853,8 +858,7 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 				fprintf(stdout, "[MAIN THREAD] %s with relay = %s\n", get_packet_type_str(type), destination_ip);
 			#endif
 		break;
-		case REGISTER_USER_ID_WITH_RELAY:
-		case REGISTER_PAYLOAD_USER_ID_WITH_RELAY:
+		case REGISTER_UIDS_WITH_RELAY:
 			if((ci_info == NULL) || (other == NULL)){
 				return -1;
 			}
@@ -899,13 +903,14 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 			get_ord_packet_checksum(&(or_payload_data[0].ord_enc), &(or_payload_data[0].ord_enc.ord_checksum));
 
 			memcpy(encrypt_buffer, &(or_payload_data[0]), sizeof(onion_route_data));
-			if(type == REGISTER_USER_ID_WITH_RELAY) {
-				memcpy(ic_data.aes_key, ci_info->ri_pool[relay_register_index].aes_key, AES_KEY_SIZE_BYTES);
-				ic_data.relay_user_id = ci_info->ri_pool[relay_register_index].relay_user_id;	
-			} else {
-				memcpy(ic_data.aes_key, ci_info->ri_pool[relay_register_index].payload_aes_key, AES_KEY_SIZE_BYTES);
-				ic_data.relay_user_id = ci_info->ri_pool[relay_register_index].payload_relay_user_id;
-			}
+			memcpy(ic_data.aes_key, ci_info->ri_pool[relay_register_index].aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.relay_user_id = ci_info->ri_pool[relay_register_index].relay_user_id;	
+			memcpy(ic_data.payload_aes_key, ci_info->ri_pool[relay_register_index].payload_aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.payload_relay_user_id = ci_info->ri_pool[relay_register_index].payload_relay_user_id;
+			memcpy(ic_data.return_route_aes_key, ci_info->ri_pool[relay_register_index].return_route_aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.return_route_user_id = ci_info->ri_pool[relay_register_index].return_route_user_id;
+			memcpy(ic_data.return_route_payload_aes_key, ci_info->ri_pool[relay_register_index].return_route_payload_aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.return_route_payload_user_id = ci_info->ri_pool[relay_register_index].return_route_payload_user_id;
 			
 			ret = RSA_public_encrypt(sizeof(id_cache_data), (unsigned char *)&ic_data, (encrypt_buffer + (sizeof(onion_route_data))), 
 										ci_info->ri_pool[relay_register_index].public_cert, RSA_PKCS1_OAEP_PADDING);
@@ -1210,14 +1215,10 @@ int print_conversation(char *thread_id, conversation_info *ci_info)
 char* get_packet_type_str(packet_type type)
 {
 	switch(type) {
-		case REGISTER_USER_ID_WITH_ENTRY_RELAY:
-			return "REGISTER_USER_ID_WITH_ENTRY_RELAY";
-		case REGISTER_PAYLOAD_USER_ID_WITH_ENTRY_RELAY:
-			return "REGISTER_PAYLOAD_USER_ID_WITH_ENTRY_RELAY";
-		case REGISTER_USER_ID_WITH_RELAY:
-			return "REGISTER_USER_ID_WITH_RELAY";
-		case REGISTER_PAYLOAD_USER_ID_WITH_RELAY:
-			return "REGISTER_PAYLOAD_USER_ID_WITH_RELAY";
+		case REGISTER_UIDS_WITH_ENTRY_RELAY:
+			return "REGISTER_UIDS_WITH_ENTRY_RELAY";
+		case REGISTER_UIDS_WITH_RELAY:
+			return "REGISTER_UIDS_WITH_RELAY";
 		case DUMMY_PACKET:
 			return "DUMMY_PACKET";
 	}

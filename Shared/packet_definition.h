@@ -46,6 +46,12 @@ typedef struct id_cache_data
 {
 	uint8_t aes_key[AES_KEY_SIZE_BYTES];
 	uint32_t relay_user_id;
+	uint8_t payload_aes_key[AES_KEY_SIZE_BYTES];
+	uint32_t payload_relay_user_id;
+	uint8_t return_route_aes_key[AES_KEY_SIZE_BYTES];
+	uint32_t return_route_user_id;
+	uint8_t return_route_payload_aes_key[AES_KEY_SIZE_BYTES];
+	uint32_t return_route_payload_user_id;
 } id_cache_data;
 
 typedef struct payload_data
