@@ -53,9 +53,10 @@ typedef struct key_entry
 int init_key_store(char *thread_id, init_type i_type);
 int shutdown_key_store(char *thread_id);
 
-int remove_key_from_key_store(char *thread_id, unsigned int user_id);
+int remove_key_from_key_store(char *thread_id, unsigned int user_id, int backup_index);
+int remove_currently_mapped_key_from_key_store(char *thread_id);
 int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in);
-int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index, key *key_out /* out */);
+int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index, key_entry *ke_out /* out */);
 int get_free_ram_in_mb(char *thread_id, unsigned long *ram_free_mb);
 int get_free_disk_space_in_mb(char *thread_id, unsigned long *disk_free_mb);
 int swap_current_mapping_to_ram(char *thread_id);

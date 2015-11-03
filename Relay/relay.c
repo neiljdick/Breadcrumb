@@ -511,7 +511,7 @@ void *handle_msg_client_thread(void *ptr)
 	onion_route_data *or_data_ptr, *or_payload_data_ptr;
 	onion_route_data *or_data_decrypted_ptr, *or_payload_data_decrypted_ptr;
 	char thread_id_buf[64];
-	key or_key;
+	key_entry ke_entry;
 	struct in_addr next_addr;
 	payload_data *pd_ptr;
 	uint16_t ord_checksum;
@@ -547,11 +547,14 @@ void *handle_msg_client_thread(void *ptr)
 	or_data_decrypted_ptr = (onion_route_data *)packet_data_decrypted;
 
 	for (i = -1; i < (int)total_key_clash_backups; ++i) {
-		ret = get_key_for_user_id(thread_id_buf, or_data_ptr->uid, i, &or_key);
+		ret = get_key_for_user_id(thread_id_buf, or_data_ptr->uid, i, &ke_entry);
 		handle_pthread_ret(thread_id_buf, ret, client_socket);
+		if(ke_entry.age < 0) {
+			continue;
+		}
 
 		ret = aes_decrypt_block(thread_id_buf, (unsigned char *)&(or_data_ptr->ord_enc), (payload_start_byte - cipher_text_byte_offset), 
-									(unsigned char *)or_key.value, AES_KEY_SIZE_BYTES, or_data_ptr->iv, (packet_data_decrypted + cipher_text_byte_offset));
+									(unsigned char *)ke_entry.p_key.value, AES_KEY_SIZE_BYTES, or_data_ptr->iv, (packet_data_decrypted + cipher_text_byte_offset));
 		handle_pthread_ret(thread_id_buf, ret, client_socket);
 
 		get_ord_packet_checksum(&(or_data_decrypted_ptr->ord_enc), &ord_checksum);
@@ -563,7 +566,7 @@ void *handle_msg_client_thread(void *ptr)
 		handle_pthread_ret(thread_id_buf, -5, client_socket);
 	}
 
-	remove_key_from_key_store(thread_id_buf, or_data_ptr->uid);	
+	remove_currently_mapped_key_from_key_store(thread_id_buf);
 	ret = set_key_for_user_id(thread_id_buf, or_data_decrypted_ptr->ord_enc.new_uid, (key *)&(or_data_decrypted_ptr->ord_enc.new_key));
 	handle_pthread_ret(thread_id_buf, ret, client_socket);
 
@@ -571,11 +574,14 @@ void *handle_msg_client_thread(void *ptr)
 	or_payload_data_decrypted_ptr = (onion_route_data *)payload_data_decrypted;
 
 	for (i = -1; i < (int)total_key_clash_backups; ++i) {
-		ret = get_key_for_user_id(thread_id_buf, or_payload_data_ptr->uid, i, &or_key);
+		ret = get_key_for_user_id(thread_id_buf, or_payload_data_ptr->uid, i, &ke_entry);
 		handle_pthread_ret(thread_id_buf, ret, client_socket);
+		if(ke_entry.age < 0) {
+			continue;
+		}
 
 		ret = aes_decrypt_block(thread_id_buf, (unsigned char *)&(or_payload_data_ptr->ord_enc), (packet_size_bytes - payload_start_byte - cipher_text_byte_offset), 
-									(unsigned char *)or_key.value, AES_KEY_SIZE_BYTES, or_payload_data_ptr->iv, (payload_data_decrypted + cipher_text_byte_offset));
+									(unsigned char *)ke_entry.p_key.value, AES_KEY_SIZE_BYTES, or_payload_data_ptr->iv, (payload_data_decrypted + cipher_text_byte_offset));
 		handle_pthread_ret(thread_id_buf, ret, client_socket);
 
 		get_ord_packet_checksum(&(or_payload_data_decrypted_ptr->ord_enc), &ord_checksum);
@@ -587,7 +593,7 @@ void *handle_msg_client_thread(void *ptr)
 		handle_pthread_ret(thread_id_buf, -5, client_socket);
 	}
 
-	remove_key_from_key_store(thread_id_buf, or_payload_data_ptr->uid);
+	remove_currently_mapped_key_from_key_store(thread_id_buf);
 	ret = set_key_for_user_id(thread_id_buf, or_payload_data_decrypted_ptr->ord_enc.new_uid, (key *)&(or_payload_data_decrypted_ptr->ord_enc.new_key));
 	handle_pthread_ret(thread_id_buf, ret, client_socket);
 	

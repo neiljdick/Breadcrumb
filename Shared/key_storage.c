@@ -336,10 +336,12 @@ int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
 	}
 
 	ke_ptr = (key_store + g_user_id);
-	if(ke_ptr->age < 0) {
+	if((ke_ptr->age < 0) || (ke_ptr->age >= MAX_KEY_ENTRY_AGE)) {
 		memcpy(&(ke_ptr->p_key), key_in, sizeof(key));
 		ke_ptr->age = 0;
 	} else {
+		ke_ptr->age++;
+
 		for(i = 0; i < num_keystore_clash_heaps; i++) {
 			if(i > MAX_KEY_CLASH_PERMITTED) {
 				return -1;
@@ -359,13 +361,15 @@ int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
     		}
 
     		ke_ptr = (key_entry *)(curr_ks_clash_addr + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
-    		if(ke_ptr->age < 0) {
+    		if((ke_ptr->age < 0) || (ke_ptr->age >= MAX_KEY_ENTRY_AGE)) {
     			memcpy(&(ke_ptr->p_key), key_in, sizeof(key));
 				ke_ptr->age = 0;
     			munmap(curr_ks_clash_addr, sizeof(key_entry) + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
     			curr_ks_clash_addr = NULL;
 
     			break;
+    		} else {
+    			ke_ptr->age++;
     		}
     		munmap(curr_ks_clash_addr, sizeof(key_entry) + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
     		curr_ks_clash_addr = NULL;
@@ -388,7 +392,7 @@ int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
 	return 0;
 }
 
-int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index, key *key_out /* out */)
+int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index, key_entry *ke_out /* out */)
 {
 	int i;
 	key_entry *ke_ptr;
@@ -397,13 +401,13 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 		gettimeofday(&t1, NULL);
 	#endif
 
-	if((key_out == NULL) || (key_store == NULL)) {
+	if((ke_out == NULL) || (key_store == NULL)) {
 		return -1;
 	}
 
 	if(user_id > max_user_id) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "%s Failed to set key, user ID (%u) must be less than key storage size (%u)\n", thread_id, user_id, max_user_id);
+			fprintf(stdout, "%s Failed to get key, user ID (%u) must be less than key storage size (%u)\n", thread_id, user_id, max_user_id);
 		#endif
 
 		return -1;
@@ -413,7 +417,7 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 	}
 
 	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "%s Attempting to get key for UID (%u)\n", thread_id, user_id);
+		fprintf(stdout, "%s Attempting to get key for UID (%u)..", thread_id, user_id);
 	#endif
 
 	g_user_id = user_id;
@@ -424,11 +428,70 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 
 	if(backup_index < 0) {
 		ke_ptr = (key_store + g_user_id);
-		if(ke_ptr->age < 0) {
-			key_out = NULL;
-		} else {
-			memcpy(key_out, &(ke_ptr->p_key), sizeof(key));
+		memcpy(ke_out, ke_ptr, sizeof(key_entry));
+	} else {
+		if(ks_fd[backup_index] < 0) {
+			return -1;
 		}
+
+		pa_offset = ((off_t)g_user_id * sizeof(key_entry)) & ~(sysconf(_SC_PAGE_SIZE) - 1);
+		curr_ks_clash_addr = mmap(NULL, sizeof(key_entry) + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset, PROT_WRITE, MAP_SHARED, ks_fd[backup_index], pa_offset);
+		if(curr_ks_clash_addr == MAP_FAILED) {
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "Failed to mmap key storage clash file (%u)\n", backup_index);
+			#endif
+
+			return -1;
+		}
+
+		ke_ptr = (key_entry *)(curr_ks_clash_addr + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
+		memcpy(ke_out, ke_ptr, sizeof(key_entry));
+	}
+
+	#ifdef ENABLE_LOGGING
+		if(ke_out->age >= 0) {
+			gettimeofday(&t2, NULL);
+			timeval_subtract(&res, &t2, &t1);
+			fprintf(stdout, "Successfully got key = ");
+			for(i = 0; i < AES_KEY_SIZE_BYTES; i++) {
+				fprintf(stdout, "%02x", (0xff & ke_out->p_key.value[i]));
+			}
+			fprintf(stdout, " for user = %u, at index: %u. Time taken: %lu us\n", g_user_id, (backup_index + 1), res.tv_usec);
+		} else {
+			fprintf(stdout, "Found key expired. Time taken: %lu us\n", res.tv_usec);
+		}
+	#endif
+
+	return 0;
+}
+
+int remove_key_from_key_store(char *thread_id, unsigned int user_id, int backup_index)
+{
+	key_entry *ke_ptr;
+
+	if(key_store == NULL) {
+		return -1;
+	}
+
+	if(user_id > max_user_id) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Failed to remove key, user ID (%u) must be less than key storage size (%u)\n", thread_id, user_id, max_user_id);
+		#endif
+
+		return -1;
+	}
+	if(backup_index >= (int)num_keystore_clash_heaps) {
+		return -1;
+	}
+
+	g_user_id = user_id;
+	if(curr_ks_clash_addr != NULL) {
+		munmap(curr_ks_clash_addr, sizeof(key_entry) + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
+		curr_ks_clash_addr = NULL;
+	}
+
+	if(backup_index < 0) {
+		ke_ptr = (key_store + user_id);
 	} else {
 		if(ks_fd[backup_index] < 0) {
 			return -1;
@@ -445,43 +508,40 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 		}
 
 		ke_ptr = (key_entry *)(curr_ks_clash_addr + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
-		if(ke_ptr->age < 0) {
-			key_out = NULL;
-		} else {
-			memcpy(key_out, &(ke_ptr->p_key), sizeof(key));
-		}
 	}
-	if(key_out == NULL) {
+	if(ke_ptr == NULL) {
 		return -1;
 	}
 
+	ke_ptr->age = -1;
 	#ifdef ENABLE_LOGGING
-		gettimeofday(&t2, NULL);
-		timeval_subtract(&res, &t2, &t1);
-		fprintf(stdout, "%s Successfully got key = ", thread_id);
-		if(key_out != NULL) {
-			for(i = 0; i < AES_KEY_SIZE_BYTES; i++) {
-				fprintf(stdout, "%02x", (0xff & key_out->value[i]));
-			}
-		} else {
-			fprintf(stdout, "NULL");
-		}
-		fprintf(stdout, " for user = %u, at index: %u. Time taken: %lu us\n", g_user_id, (backup_index + 1), res.tv_usec);
+		fprintf(stdout, "%s Successfully removed key with UID = %u and backup index = %d\n", thread_id, g_user_id, backup_index);
 	#endif
 
 	return 0;
 }
 
-int remove_key_from_key_store(char *thread_id, unsigned int user_id) // Backup index as argument
+int remove_currently_mapped_key_from_key_store(char *thread_id)
 {
-	// TODO
+	key_entry *ke_ptr;
 
-	return 0;
-}
+	if(key_store == NULL) {
+		return -1;
+	}
 
-int remove_currently_mapped_key_from_key_store(char *thread_id) // Check if mapping is NULL - in which case removal of RAM key
-{
-	// TODO
+	if(curr_ks_clash_addr == NULL) {
+		ke_ptr = (key_store + g_user_id);
+	} else {
+		ke_ptr = (key_entry *)(curr_ks_clash_addr + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
+	}
+	if(ke_ptr == NULL) {
+		return -1;
+	}
+
+	ke_ptr->age = -1;
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "%s Successfully removed key with UID = %u\n", thread_id, g_user_id);
+	#endif
 	
 	return 0;
 }
