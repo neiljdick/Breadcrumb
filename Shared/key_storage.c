@@ -1,7 +1,9 @@
 #include "key_storage.h"
 
 #define ENABLE_LOGGING
-#define DEBUG_MODE
+//#define DEBUG_MODE
+
+const unsigned char *key_storage_dir = (unsigned char *)".key_storage";
 
 key_entry *key_store = NULL;
 
@@ -12,62 +14,10 @@ int ks_fd[MAX_KEY_CLASH_PERMITTED];
 char *curr_ks_clash_addr;
 off_t pa_offset;
 
-#ifdef DEBUG_MODE
-
-int main(int argc, char const *argv[])
-{
-	unsigned long ram_free_mb;
-	int ret;
-	key debug_key;
-
-	fprintf(stdout, "[DEBUG MODE] Begin\n");
-	fprintf(stdout, "[DEBUG MODE] Size of key entry: %lu\n", sizeof(key_entry));
-
-	ret = init_key_store("[DEBUG MODE]", SOFT);
-	if(ret < 0) {
-		return -1;
-	}
-
-	memset(debug_key.value, 0x30, AES_KEY_SIZE_BYTES);
-	set_key_for_user_id("[DEBUG MODE]", 22045, &debug_key);
-	memset(debug_key.value, 0x31, AES_KEY_SIZE_BYTES);
-	set_key_for_user_id("[DEBUG MODE]", 22045, &debug_key);
-	
-	memset(debug_key.value, 0x32, AES_KEY_SIZE_BYTES);
-	set_key_for_user_id("[DEBUG MODE]", 22046, &debug_key);
-	memset(debug_key.value, 0x33, AES_KEY_SIZE_BYTES);
-	set_key_for_user_id("[DEBUG MODE]", 22046, &debug_key);
-	
-	memset(debug_key.value, 0x34, AES_KEY_SIZE_BYTES);
-	set_key_for_user_id("[DEBUG MODE]", 22047, &debug_key);
-	memset(debug_key.value, 0x35, AES_KEY_SIZE_BYTES);
-	set_key_for_user_id("[DEBUG MODE]", 22047, &debug_key);
-
-	memset(debug_key.value, 0x36, AES_KEY_SIZE_BYTES);
-	set_key_for_user_id("[DEBUG MODE]", 22048, &debug_key);
-	memset(debug_key.value, 0x37, AES_KEY_SIZE_BYTES);
-	set_key_for_user_id("[DEBUG MODE]", 22048, &debug_key);
-
-	memset(debug_key.value, 0x38, AES_KEY_SIZE_BYTES);
-	set_key_for_user_id("[DEBUG MODE]", 22049, &debug_key);
-	memset(debug_key.value, 0x39, AES_KEY_SIZE_BYTES);
-	set_key_for_user_id("[DEBUG MODE]", 22049, &debug_key);
-
-	get_key_for_user_id("[DEBUG MODE]", 22045, -1, &debug_key);
-	get_key_for_user_id("[DEBUG MODE]", 22045, 0, &debug_key);
-
-	get_key_for_user_id("[DEBUG MODE]", 22046, -1, &debug_key);
-	get_key_for_user_id("[DEBUG MODE]", 22046, 0, &debug_key);
-	swap_current_mapping_to_ram("[DEBUG MODE]");
-	get_key_for_user_id("[DEBUG MODE]", 22046, -1, &debug_key);
-	get_key_for_user_id("[DEBUG MODE]", 22046, 0, &debug_key);
-
-	while(1) sleep(10);
-	
-	return 0;
-}
-
-#endif
+static int init_key_storage_memory(char *thread_id, init_type i_type);
+static int reset_key_entry_ages(char *thread_id);
+static int free_key_store(char *thread_id);
+static int init_globals(char *thread_id);
 
 int init_key_store(char *thread_id, init_type i_type)
 {
@@ -99,6 +49,21 @@ int init_key_store(char *thread_id, init_type i_type)
 	return 0;
 }
 
+int get_number_of_key_clash_backups(char *thread_id, unsigned int *total_key_clash_backups)
+{
+	if(total_key_clash_backups == NULL) {
+		return -1;
+	}
+
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "%s Total number of keystore clash heaps: %u\n", thread_id, num_keystore_clash_heaps);
+	#endif
+
+	*total_key_clash_backups = num_keystore_clash_heaps;
+
+	return 0;
+}
+
 int shutdown_key_store(char *thread_id)
 {
 	// TODO
@@ -106,7 +71,7 @@ int shutdown_key_store(char *thread_id)
 	return 0;
 } 
 
-int init_globals(char *thread_id)
+static int init_globals(char *thread_id)
 {
 	int i;
 
@@ -128,14 +93,12 @@ static int init_key_storage_memory(char *thread_id, init_type i_type)
 {
 	int ret, i;
 	unsigned int j;
-	unsigned long ram_free_mb, max_num_keys_can_store;
-	unsigned long disk_free_mb, disk_space_required_mb;
-	unsigned int key_entry_size;
+	unsigned long ram_free_mb;
+	unsigned long disk_free_mb;
 	float attempting_usage_ratio;
 	const unsigned int empty_ke_buf_len = 1000;
 	char buf[64], empty_key_entry_buf[sizeof(key_entry) * empty_ke_buf_len];
 	unsigned int empty_key_entry_count, empty_key_entry_count_overflow;
-	int num_empty_key_to_write;
 	key_entry empty_key_entry;
 
 	if(key_store != NULL) {
@@ -191,7 +154,7 @@ static int init_key_storage_memory(char *thread_id, init_type i_type)
 		}
 	}
 
-	fprintf(stdout, "%s Initializing key store heaps", thread_id);
+	fprintf(stdout, "%s Initializing key store heaps..", thread_id);
 	fflush(stdout);
 	sprintf(buf, "./%s", key_storage_dir);
 	mkdir(buf, S_IRWXU | S_IRWXG);
@@ -262,7 +225,7 @@ static int reset_key_entry_ages(char *thread_id)
 	return 0;
 }
 
-static int handle_key_entry_age_increment(char *thread_id)
+int handle_key_entry_age_increment(char *thread_id)
 {
 	key_entry *ke_ptr;
 	int i;
@@ -347,7 +310,7 @@ int swap_current_mapping_to_ram(char *thread_id)
 
 int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
 {
-	int i, j;
+	int i;
 	key_entry *ke_ptr;
 	#ifdef ENABLE_LOGGING
 		struct timeval res, t1, t2;
@@ -449,6 +412,10 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 		return -1;
 	}
 
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "%s Attempting to get key for UID (%u)\n", thread_id, user_id);
+	#endif
+
 	g_user_id = user_id;
 	if(curr_ks_clash_addr != NULL) {
 		munmap(curr_ks_clash_addr, sizeof(key_entry) + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
@@ -484,6 +451,9 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 			memcpy(key_out, &(ke_ptr->p_key), sizeof(key));
 		}
 	}
+	if(key_out == NULL) {
+		return -1;
+	}
 
 	#ifdef ENABLE_LOGGING
 		gettimeofday(&t2, NULL);
@@ -502,11 +472,29 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 	return 0;
 }
 
-int get_max_user_id(void)
+int remove_key_from_key_store(char *thread_id, unsigned int user_id) // Backup index as argument
 {
-	init_key_store("[MAIN THREAD]", SOFT);
+	// TODO
 
-	return max_user_id;
+	return 0;
+}
+
+int remove_currently_mapped_key_from_key_store(char *thread_id) // Check if mapping is NULL - in which case removal of RAM key
+{
+	// TODO
+	
+	return 0;
+}
+
+int get_max_user_id(char *thread_id, unsigned int *max_uid)
+{
+	if(max_uid == NULL) {
+		return -1;
+	}
+
+	*max_uid = max_user_id;
+
+	return 0;
 }
 
 int get_free_ram_in_mb(char *thread_id, unsigned long *ram_free_mb)
@@ -667,3 +655,60 @@ int timeval_subtract (struct timeval *result, struct timeval *x, struct timeval 
 	/* Return 1 if result is negative. */
 	return x->tv_sec < y->tv_sec;
 }
+
+
+#ifdef DEBUG_MODE
+
+int main(int argc, char const *argv[])
+{
+	int ret;
+	key debug_key;
+
+	fprintf(stdout, "[DEBUG MODE] Begin\n");
+	fprintf(stdout, "[DEBUG MODE] Size of key entry: %lu\n", sizeof(key_entry));
+
+	ret = init_key_store("[DEBUG MODE]", SOFT);
+	if(ret < 0) {
+		return -1;
+	}
+
+	memset(debug_key.value, 0x30, AES_KEY_SIZE_BYTES);
+	set_key_for_user_id("[DEBUG MODE]", 22045, &debug_key);
+	memset(debug_key.value, 0x31, AES_KEY_SIZE_BYTES);
+	set_key_for_user_id("[DEBUG MODE]", 22045, &debug_key);
+	
+	memset(debug_key.value, 0x32, AES_KEY_SIZE_BYTES);
+	set_key_for_user_id("[DEBUG MODE]", 22046, &debug_key);
+	memset(debug_key.value, 0x33, AES_KEY_SIZE_BYTES);
+	set_key_for_user_id("[DEBUG MODE]", 22046, &debug_key);
+	
+	memset(debug_key.value, 0x34, AES_KEY_SIZE_BYTES);
+	set_key_for_user_id("[DEBUG MODE]", 22047, &debug_key);
+	memset(debug_key.value, 0x35, AES_KEY_SIZE_BYTES);
+	set_key_for_user_id("[DEBUG MODE]", 22047, &debug_key);
+
+	memset(debug_key.value, 0x36, AES_KEY_SIZE_BYTES);
+	set_key_for_user_id("[DEBUG MODE]", 22048, &debug_key);
+	memset(debug_key.value, 0x37, AES_KEY_SIZE_BYTES);
+	set_key_for_user_id("[DEBUG MODE]", 22048, &debug_key);
+
+	memset(debug_key.value, 0x38, AES_KEY_SIZE_BYTES);
+	set_key_for_user_id("[DEBUG MODE]", 22049, &debug_key);
+	memset(debug_key.value, 0x39, AES_KEY_SIZE_BYTES);
+	set_key_for_user_id("[DEBUG MODE]", 22049, &debug_key);
+
+	get_key_for_user_id("[DEBUG MODE]", 22045, -1, &debug_key);
+	get_key_for_user_id("[DEBUG MODE]", 22045, 0, &debug_key);
+
+	get_key_for_user_id("[DEBUG MODE]", 22046, -1, &debug_key);
+	get_key_for_user_id("[DEBUG MODE]", 22046, 0, &debug_key);
+	swap_current_mapping_to_ram("[DEBUG MODE]");
+	get_key_for_user_id("[DEBUG MODE]", 22046, -1, &debug_key);
+	get_key_for_user_id("[DEBUG MODE]", 22046, 0, &debug_key);
+
+	while(1) sleep(10);
+	
+	return 0;
+}
+
+#endif

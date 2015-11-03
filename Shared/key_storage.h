@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 
 #define MAX_KEY_CLASH_PERMITTED 			(4)
 
@@ -28,9 +29,9 @@
 #define DEFAULT_DISK_FREE_MB 				(1000)
 #define MAX_DISK_UTILIZATION_RATIO			(0.2)
 
-#define MAX_KEY_ENTRY_AGE 					(100) // 8-bit
+#define MAX_KEY_ENTRY_AGE 					(20) // TODO determine experimentally?
 
-const unsigned char *key_storage_dir = ".key_storage";
+extern const unsigned char *key_storage_dir;
 
 typedef enum 
 {
@@ -55,14 +56,12 @@ int shutdown_key_store(char *thread_id);
 int remove_key_from_key_store(char *thread_id, unsigned int user_id);
 int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in);
 int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index, key *key_out /* out */);
-int get_max_user_id(void);
 int get_free_ram_in_mb(char *thread_id, unsigned long *ram_free_mb);
 int get_free_disk_space_in_mb(char *thread_id, unsigned long *disk_free_mb);
 int swap_current_mapping_to_ram(char *thread_id);
-
-static int init_key_storage_memory(char *thread_id, init_type i_type);
-static int reset_key_entry_ages(char *thread_id);
-static int free_key_store(char *thread_id);
+int get_number_of_key_clash_backups(char *thread_id, unsigned int *total_key_clash_backups);
+int handle_key_entry_age_increment(char *thread_id);
+int get_max_user_id(char *thread_id, unsigned int *max_uid);
 
 int timeval_subtract(struct timeval *result, struct timeval *x, struct timeval *y);
 

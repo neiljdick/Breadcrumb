@@ -39,7 +39,7 @@ char *program_name = "Client";
 #define RELAY_IP_MAX_LENGTH						(16)
 #define RELAY_ID_LEN 							((SHA256_DIGEST_LENGTH * 2) + 1)
 
-#define MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER 	(2)
+#define MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER 	(3)
 
 #define PACKET_TRANSMISSION_DELAY				(3)
 #define MAIN_THREAD_SLEEP_TIME					(5)
@@ -63,6 +63,7 @@ typedef struct relay_indexer_info
 typedef struct relay_info
 {
 	int is_active;
+	unsigned int max_uid;
 	char relay_id[RELAY_ID_LEN];
 	char relay_ip[RELAY_IP_MAX_LENGTH];
 	unsigned char aes_key[AES_KEY_SIZE_BYTES];
@@ -110,7 +111,7 @@ int perform_user_id_registration(conversation_info *ci_info);
 int get_index_of_next_free_conversation(conversation_info *conversations);
 int create_packet(packet_type type, conversation_info *ci_info, route_info *r_info, payload_data *payload, void *other, unsigned char *packet, char *destination_ip, int *destination_port);
 int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destination_port);
-int generate_new_user_id(unsigned int *uid /* out */);
+int generate_new_user_id(conversation_info *ci_info, int relay_index, unsigned int *uid /* out */);
 int is_valid_ip(char *ip, int *valid /* out */);
 int print_conversation(char *thread_id, conversation_info *ci_info);
 char* get_packet_type_str(packet_type type);

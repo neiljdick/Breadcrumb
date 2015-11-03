@@ -21,6 +21,27 @@ int initialize_packet_definitions(char *thread_id)
 	return 0;
 }
 
+int get_ord_packet_checksum(onion_route_data_encrypted *ord_enc, uint16_t *ord_checksum)
+{
+	int i;
+	uint32_t checksum_32 = 0;
+
+	if((ord_enc == NULL) || (ord_checksum == NULL)) {
+		return -1;
+	}
+
+	for (i = 0; i < sizeof(onion_route_data_encrypted)/sizeof(uint16_t); i++) {
+		checksum_32 += 0xFFFF & (*(((uint16_t *)ord_enc) + i));
+	}
+	while(checksum_32 > 0xFFFF) {
+		checksum_32 = (checksum_32 & 0xFFFF) + (checksum_32 >> 16);
+	}
+
+	*ord_checksum = ~((uint16_t)(checksum_32 & 0xFFFF));
+
+	return 0;
+}
+
 void print_packet_definitions(void)
 {
 	fprintf(stdout, "Packet size bytes = %u\n", packet_size_bytes);

@@ -1,6 +1,7 @@
 #include "relay.h"
 
 #define ENABLE_LOGGING
+#define DEBUG_MODE
 //#define ENABLE_THREAD_LOGGING
 //#define PRINT_PACKETS
 
@@ -14,9 +15,11 @@ unsigned int client_msg_port, id_cache_port, cert_request_port;
 char *relay_id;
 int relay_id_len;
 RSA *rsa;
+unsigned int max_uid, total_key_clash_backups;
 
-void handle_pthread_ret(int ret, int clientfd);
+void handle_pthread_ret(char *thread_id, int ret, int clientfd);
 void handle_pthread_bytesread(int bytes_read, int clientfd);
+void init_globals();
 
 int main(int argc, char const *argv[])
 {
@@ -28,6 +31,8 @@ int main(int argc, char const *argv[])
 		fprintf(stdout, "[MAIN THREAD] Usage: ./%s [RELAY ID] [PORT]\n", program_name);
 		exit(-1);
 	}
+	init_globals();
+
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "[MAIN THREAD] %s program begin\n", program_name);
 	#endif
@@ -113,16 +118,35 @@ int main(int argc, char const *argv[])
 	return 0;
 }
 
+void init_globals(void)
+{
+	client_msg_port = 0;
+	id_cache_port = 0; 
+	cert_request_port = 0;
+	max_uid = 0;
+	total_key_clash_backups = 0;
+	relay_id = NULL;
+	relay_id_len = -1;
+	rsa = NULL;
+}
+
 int initialize_key_store(char *thread_id)
 {
 	int ret;
 
 	sem_init(&keystore_sem, 0 , 1);
 
-	ret = init_key_store(thread_id);
+	#ifdef DEBUG_MODE
+		ret = init_key_store(thread_id, SOFT);
+	#else
+		ret = init_key_store(thread_id, HARD);
+	#endif
 	if(ret < 0) {
 		return -1;
 	}
+
+	get_max_user_id(thread_id, &max_uid);
+	get_number_of_key_clash_backups(thread_id, &total_key_clash_backups);
 
 	return 0;
 }
@@ -164,8 +188,9 @@ void *certificate_request_handler_thread(void *ptr)
 			fprintf(stdout, "[CERTIFICATE REQUEST THREAD] %s:%d requested certificate\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 		#endif
 
-		write(client_socket, (void *)relay_id, relay_id_len); // TODO check all bytes are sent
-		write(client_socket, (void *)public_key_buffer, public_key_buffer_len);
+		write(client_socket, &max_uid, sizeof(max_uid));
+		write(client_socket, relay_id, relay_id_len); // TODO check all bytes are sent
+		write(client_socket, public_key_buffer, public_key_buffer_len);
 		fsync(client_socket);
 		close(client_socket);
 
@@ -489,6 +514,7 @@ void *handle_msg_client_thread(void *ptr)
 	key or_key;
 	struct in_addr next_addr;
 	payload_data *pd_ptr;
+	uint16_t ord_checksum;
 
 	self_thread_id = pthread_self();
 	sprintf(thread_id_buf, "[MSG CLIENT THREAD 0x%x]", (unsigned int)self_thread_id);
@@ -497,10 +523,6 @@ void *handle_msg_client_thread(void *ptr)
 	#endif
 
 	if(ptr == NULL) {
-		#ifdef ENABLE_THREAD_LOGGING
-			fprintf(stdout, "%s Handle client thread created with null arguments\n", thread_id_buf);
-		#endif
-
 		pthread_ret = (char *)-1;
 		pthread_exit(pthread_ret);
 	}
@@ -524,33 +546,53 @@ void *handle_msg_client_thread(void *ptr)
 	or_data_ptr = (onion_route_data *)packet_data_encrypted;
 	or_data_decrypted_ptr = (onion_route_data *)packet_data_decrypted;
 
-	ret = get_key_for_user_id(thread_id_buf, or_data_ptr->uid, &or_key);
-	handle_pthread_ret(ret, client_socket);
-	remove_key_from_key_store(thread_id_buf, or_data_ptr->uid);
+	for (i = -1; i < (int)total_key_clash_backups; ++i) {
+		ret = get_key_for_user_id(thread_id_buf, or_data_ptr->uid, i, &or_key);
+		handle_pthread_ret(thread_id_buf, ret, client_socket);
 
-	ret = aes_decrypt_block(thread_id_buf, (unsigned char *)&(or_data_ptr->ord_enc), (payload_start_byte - cipher_text_byte_offset), 
-								(unsigned char *)or_key.value, AES_KEY_SIZE_BYTES, or_data_ptr->iv, (packet_data_decrypted + cipher_text_byte_offset));
-	handle_pthread_ret(ret, client_socket);
+		ret = aes_decrypt_block(thread_id_buf, (unsigned char *)&(or_data_ptr->ord_enc), (payload_start_byte - cipher_text_byte_offset), 
+									(unsigned char *)or_key.value, AES_KEY_SIZE_BYTES, or_data_ptr->iv, (packet_data_decrypted + cipher_text_byte_offset));
+		handle_pthread_ret(thread_id_buf, ret, client_socket);
 
+		get_ord_packet_checksum(&(or_data_decrypted_ptr->ord_enc), &ord_checksum);
+		if(ord_checksum == 0) {
+			break;
+		}
+	}
+	if(i >= (int)total_key_clash_backups) {
+		handle_pthread_ret(thread_id_buf, -5, client_socket);
+	}
+
+	remove_key_from_key_store(thread_id_buf, or_data_ptr->uid);	
 	ret = set_key_for_user_id(thread_id_buf, or_data_decrypted_ptr->ord_enc.new_uid, (key *)&(or_data_decrypted_ptr->ord_enc.new_key));
-	handle_pthread_ret(ret, client_socket);
+	handle_pthread_ret(thread_id_buf, ret, client_socket);
 
 	or_payload_data_ptr = (onion_route_data *)(packet_data_encrypted + payload_start_byte);
 	or_payload_data_decrypted_ptr = (onion_route_data *)payload_data_decrypted;
 
-	ret = get_key_for_user_id(thread_id_buf, or_payload_data_ptr->uid, &or_key);
-	handle_pthread_ret(ret, client_socket);
+	for (i = -1; i < (int)total_key_clash_backups; ++i) {
+		ret = get_key_for_user_id(thread_id_buf, or_payload_data_ptr->uid, i, &or_key);
+		handle_pthread_ret(thread_id_buf, ret, client_socket);
+
+		ret = aes_decrypt_block(thread_id_buf, (unsigned char *)&(or_payload_data_ptr->ord_enc), (packet_size_bytes - payload_start_byte - cipher_text_byte_offset), 
+									(unsigned char *)or_key.value, AES_KEY_SIZE_BYTES, or_payload_data_ptr->iv, (payload_data_decrypted + cipher_text_byte_offset));
+		handle_pthread_ret(thread_id_buf, ret, client_socket);
+
+		get_ord_packet_checksum(&(or_payload_data_decrypted_ptr->ord_enc), &ord_checksum);
+		if(ord_checksum == 0) {
+			break;
+		}
+	}
+	if(i >= (int)total_key_clash_backups) {
+		handle_pthread_ret(thread_id_buf, -5, client_socket);
+	}
+
 	remove_key_from_key_store(thread_id_buf, or_payload_data_ptr->uid);
-
-	ret = aes_decrypt_block(thread_id_buf, (unsigned char *)&(or_payload_data_ptr->ord_enc), (packet_size_bytes - payload_start_byte - cipher_text_byte_offset), 
-								(unsigned char *)or_key.value, AES_KEY_SIZE_BYTES, or_payload_data_ptr->iv, (payload_data_decrypted + cipher_text_byte_offset));
-	handle_pthread_ret(ret, client_socket);
-
 	ret = set_key_for_user_id(thread_id_buf, or_payload_data_decrypted_ptr->ord_enc.new_uid, (key *)&(or_payload_data_decrypted_ptr->ord_enc.new_key));
-	handle_pthread_ret(ret, client_socket);
+	handle_pthread_ret(thread_id_buf, ret, client_socket);
 	
 	ret = fill_buf_with_random_data(packet_data, packet_size_bytes);
-	handle_pthread_ret(ret, client_socket);
+	handle_pthread_ret(thread_id_buf, ret, client_socket);
 	memcpy(packet_data, (packet_data_decrypted + sizeof(onion_route_data)), (sizeof(onion_route_data) * 2));
 	memcpy((packet_data + payload_start_byte), (payload_data_decrypted + sizeof(onion_route_data)), (packet_size_bytes - payload_start_byte - sizeof(onion_route_data)));
 
@@ -725,11 +767,23 @@ int get_thread_pool_id_from_index(int index, char *pool_id /* out */)
 	return 0;
 }
 
-void handle_pthread_ret(int ret, int clientfd)
+void print_ret_code(char *thread_id, int ret)
+{
+	#ifdef ENABLE_LOGGING
+		if(ret == -5) {
+			fprintf(stdout, "%s Failed to retrieve key\n", thread_id);
+		} else if (ret < 0) {
+			fprintf(stdout, "%s Generic thread error\n", thread_id);
+		}
+	#endif
+}
+
+void handle_pthread_ret(char *thread_id, int ret, int clientfd)
 {
 	char *pthread_ret;
 
 	if(ret < 0) {
+		print_ret_code(thread_id, ret);
 		close(clientfd);
 		pthread_ret = (char *)0;
 		pthread_exit(pthread_ret);

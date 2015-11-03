@@ -28,7 +28,7 @@ typedef struct onion_route_data_encrypted
 {
 	uint64_t next_pkg_ip;
 	uint16_t next_pkg_port;
-	uint16_t align_filler1;
+	uint16_t ord_checksum;
 	uint32_t new_uid;
 	uint8_t new_key[AES_KEY_SIZE_BYTES];
 } onion_route_data_encrypted;
@@ -60,6 +60,7 @@ typedef struct payload_data
 } payload_data;
 
 int initialize_packet_definitions(char *thread_id);
+int get_ord_packet_checksum(onion_route_data_encrypted *ord_enc, uint16_t *ord_checksum);
 void print_packet_definitions(void);
 int print_or_data(char *thread_id, onion_route_data *or_data);
 char* get_string_for_payload_type(payload_type type);

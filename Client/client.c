@@ -3,9 +3,14 @@
 #define ENABLE_LOGGING
 #define DEBUG_MODE
 //#define PRINT_PACKETS
+#define UID_CLASH_ENABLE
 
 #ifdef DEBUG_MODE
 	static int debug_convo_count = 0;
+#endif
+
+#ifdef UID_CLASH_ENABLE
+	int uid_clash_offset;
 #endif
 
 sem_t sp_node_sem;
@@ -16,6 +21,8 @@ int index_of_active_conversation;
 conversation_info conversations[MAX_CONVERSATIONS];
 
 int message_port, id_cache_port, cert_request_port;
+
+void init_globals(void);
 
 int main(int argc, char const *argv[])
 {
@@ -28,6 +35,8 @@ int main(int argc, char const *argv[])
 		fprintf(stdout, "Usage: ./%s [USER ID] [PORT]\n", program_name);
 		exit(-1);
 	}
+	init_globals();
+
 	// TODO refactor into function which performs command line argument veracity check
 	if(strlen(argv[2]) > USER_NAME_MAX_LENGTH) {
 		fprintf(stdout, "Username must be less than %u characters\n", USER_NAME_MAX_LENGTH);
@@ -42,6 +51,12 @@ int main(int argc, char const *argv[])
 		fprintf(stdout, "[MAIN THREAD] Port number (%u) must be less than %u\n", message_port, PORT_MAX);
 		exit(-5);
 	}
+	id_cache_port = message_port + 1;
+	cert_request_port = message_port + 2;
+	memset(user_id, 0, sizeof(user_id));
+	strncpy((char *)user_id, argv[1], (USER_NAME_MAX_LENGTH-1));
+	memset(friend_id, 0, sizeof(friend_id));
+	memset(conversations, 0, sizeof(conversations));
 
 	ret = init_send_packet_node();
 	if(ret < 0) {
@@ -56,14 +71,6 @@ int main(int argc, char const *argv[])
 		exit(-2);	
 	}
 
-	// TODO refactor into function which performs global variable initialization
-	id_cache_port = message_port + 1;
-	cert_request_port = message_port + 2;
-	memset(user_id, 0, sizeof(user_id));
-	strncpy((char *)user_id, argv[1], (USER_NAME_MAX_LENGTH-1));
-	memset(friend_id, 0, sizeof(friend_id));
-	memset(conversations, 0, sizeof(conversations));
-
 	get_friend_id(friend_id);
 	free_convo_index = get_index_of_next_free_conversation(conversations);
 	if(free_convo_index < 0) {
@@ -76,6 +83,19 @@ int main(int argc, char const *argv[])
 	}
 
 	return 0;
+}
+
+void init_globals(void)
+{
+	sp_node = NULL;
+	index_of_active_conversation = 0;
+	message_port = 0;
+	id_cache_port = 0;
+	cert_request_port = 0;
+
+	#ifdef UID_CLASH_ENABLE
+		uid_clash_offset = get_pseudo_random_number(0) % 10000;
+	#endif
 }
 
 int init_send_packet_node(void)
@@ -225,15 +245,13 @@ int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 		
 		sprintf(ci_out->conversation_name, "debug_mode_convo_%u", debug_convo_count++);
 		memcpy(ci_out->friend_name, friend_name, strlen(friend_name));
-		ci_out->index_of_server_relay = 3;
-		strcpy(ci_out->ri_pool[0].relay_ip, "10.10.6.200");
-		strcpy(ci_out->ri_pool[1].relay_ip, "10.10.6.201");
-		strcpy(ci_out->ri_pool[2].relay_ip, "10.10.6.202");
-		strcpy(ci_out->ri_pool[3].relay_ip, "10.10.6.220");
+		ci_out->index_of_server_relay = 2;
+		strcpy(ci_out->ri_pool[0].relay_ip, "10.10.6.201");
+		strcpy(ci_out->ri_pool[1].relay_ip, "10.10.6.202");
+		strcpy(ci_out->ri_pool[2].relay_ip, "10.10.6.220");
 		ci_out->ri_pool[0].is_active = 1;
 		ci_out->ri_pool[1].is_active = 1;
 		ci_out->ri_pool[2].is_active = 1;
-		ci_out->ri_pool[3].is_active = 1;
 
 		ret = get_relay_public_certificates_debug(ci_out);
 		if(ret < 0) {
@@ -347,6 +365,8 @@ int get_relay_public_certificates_debug(conversation_info *ci_info)
 			continue;
 		}
 
+		read(cr_socket, &(ci_info->ri_pool[i].max_uid), sizeof(ci_info->ri_pool[i].max_uid));
+
 		id_read_success = key_read_success = 0;
 		bytes_read = 0;
 		for(j = 0; j < NUM_CERT_READ_ATTEMPTS; j++) {
@@ -387,7 +407,8 @@ int get_relay_public_certificates_debug(conversation_info *ci_info)
 			continue;
 		}
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Successfully read public certificate from relay, id = '%s', ip = '%s'\n", ci_info->ri_pool[i].relay_id, ci_info->ri_pool[i].relay_ip);
+			fprintf(stdout, "[MAIN THREAD] Successfully read public certificate from relay, id = '%s', ip = '%s', max uid = %u\n", 
+				ci_info->ri_pool[i].relay_id, ci_info->ri_pool[i].relay_ip, ci_info->ri_pool[i].max_uid);
 		#endif
 
 		sprintf(relay_cert_file_name, "./%s", public_cert_dir);
@@ -418,8 +439,8 @@ int get_relay_public_certificates_debug(conversation_info *ci_info)
 int set_entry_relay_for_conversation(conversation_info *ci_info)
 {
 	int i;
-	unsigned int initial_seed_value;
-	unsigned int first_relay_index, max_valid_relay_index;
+	unsigned int initial_seed_value, num_relays;
+	unsigned int first_relay_index;
 
 	if(ci_info == NULL) {
 		return -1;
@@ -428,15 +449,15 @@ int set_entry_relay_for_conversation(conversation_info *ci_info)
 		return -1;
 	}
 
-	for (i = (RELAY_POOL_MAX_SIZE-1); i >= 0; i--) {
-		if(ci_info->ri_pool[i].public_cert != NULL) {
-			max_valid_relay_index = i;
-			break;
+	num_relays = 0;
+	for (i = 0; i < RELAY_POOL_MAX_SIZE; i++) {
+		if(ci_info->ri_pool[i].is_active) {
+			num_relays++;
 		}
 	}
-	if(i < MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER) {
+	if(num_relays < MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Unable to register user ID with relays as number of relays (%u) is less than minimum (%u)\n", (i+1), MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER);
+			fprintf(stdout, "[MAIN THREAD] Unable to register user ID with relays as number of relays (%u) is less than minimum (%u)\n", num_relays, MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER);
 		#endif
 
 		return -1;
@@ -449,10 +470,10 @@ int set_entry_relay_for_conversation(conversation_info *ci_info)
 		first_relay_index = get_pseudo_random_number(initial_seed_value);
 		initial_seed_value ^= first_relay_index;
 
-		first_relay_index %= (max_valid_relay_index + 1);
+		first_relay_index %= RELAY_POOL_MAX_SIZE;
 		if(first_relay_index == ci_info->index_of_server_relay)
 			continue;
-		if(ci_info->ri_pool[first_relay_index].public_cert != NULL)
+		if(ci_info->ri_pool[first_relay_index].is_active)
 			break;
 	}
 	ci_info->index_of_entry_relay = first_relay_index;
@@ -497,21 +518,27 @@ int set_user_ids_for_conversation(conversation_info *ci_info)
 
 	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
 		if(ci_info->ri_pool[i].is_active) {
-			generate_new_user_id(&(ci_info->ri_pool[i].relay_user_id));
-			generate_new_user_id(&(ci_info->ri_pool[i].payload_relay_user_id));
+			generate_new_user_id(ci_info, i, &(ci_info->ri_pool[i].relay_user_id));
+			generate_new_user_id(ci_info, i, &(ci_info->ri_pool[i].payload_relay_user_id));
 		}
 	}
 
 	return 0;
 }
 
-int generate_new_user_id(unsigned int *uid /* out */)
+int generate_new_user_id(conversation_info *ci_info, int relay_index, unsigned int *uid /* out */)
 {
 	int i;
 	unsigned int initial_seed_value;
 	unsigned int relay_user_id;
 
-	if(uid == NULL) {
+	if((ci_info == NULL) || (uid == NULL)) {
+		return -1;
+	}
+	if((relay_index < 0) || (relay_index > RELAY_POOL_MAX_SIZE)) {
+		return -1;
+	}
+	if(ci_info->ri_pool[relay_index].max_uid == 0) {
 		return -1;
 	}
 
@@ -519,9 +546,17 @@ int generate_new_user_id(unsigned int *uid /* out */)
 		initial_seed_value ^= (((unsigned int)user_id[3])<<24) | (((unsigned int)user_id[2])<<16) | (((unsigned int)user_id[1])<<8) | ((unsigned int)user_id[0]);
 	}
 	relay_user_id = get_pseudo_random_number(initial_seed_value);
-	relay_user_id %= get_max_user_id();
+	relay_user_id %= ci_info->ri_pool[relay_index].max_uid;
 
+	#ifdef UID_CLASH_ENABLE
+		relay_user_id %= 5;
+		relay_user_id += uid_clash_offset;
+	#endif
 	*uid = relay_user_id;
+	
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "[MAIN THREAD] Generated new user ID = %u, relay_index = %u, max = %u\n", *uid, relay_index, ci_info->ri_pool[relay_index].max_uid);
+	#endif
 
 	return 0;
 }
@@ -840,10 +875,13 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 
 			generate_AES_key((unsigned char *)or_data[0].iv, AES_KEY_SIZE_BYTES);
 			or_data[0].uid = ci_info->ri_pool[ci_info->index_of_entry_relay].relay_user_id;
-			generate_new_user_id(&(or_data[0].ord_enc.new_uid));
+			generate_new_user_id(ci_info, ci_info->index_of_entry_relay, &(or_data[0].ord_enc.new_uid));
 			generate_AES_key((unsigned char *)or_data[0].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 			inet_aton(ci_info->ri_pool[relay_register_index].relay_ip, (struct in_addr *)&(or_data[0].ord_enc.next_pkg_ip));
 			or_data[0].ord_enc.next_pkg_port = id_cache_port;
+
+			or_data[0].ord_enc.ord_checksum = 0;
+			get_ord_packet_checksum(&(or_data[0].ord_enc), &(or_data[0].ord_enc.ord_checksum));
 
 			ret = aes_encrypt_block("[MAIN THREAD]", (unsigned char *)&(or_data[0].ord_enc), sizeof(onion_route_data_encrypted), 
 										ci_info->ri_pool[ci_info->index_of_entry_relay].aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[0].iv), (packet + cipher_text_byte_offset));
@@ -854,8 +892,11 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 
 			generate_AES_key((unsigned char *)or_payload_data[0].iv, AES_KEY_SIZE_BYTES);
 			or_payload_data[0].uid = ci_info->ri_pool[ci_info->index_of_entry_relay].payload_relay_user_id;
-			generate_new_user_id(&(or_payload_data[0].ord_enc.new_uid));
+			generate_new_user_id(ci_info, ci_info->index_of_entry_relay, &(or_payload_data[0].ord_enc.new_uid));
 			generate_AES_key((unsigned char *)or_payload_data[0].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+
+			or_payload_data[0].ord_enc.ord_checksum = 0;
+			get_ord_packet_checksum(&(or_payload_data[0].ord_enc), &(or_payload_data[0].ord_enc.ord_checksum));
 
 			memcpy(encrypt_buffer, &(or_payload_data[0]), sizeof(onion_route_data));
 			if(type == REGISTER_USER_ID_WITH_RELAY) {
@@ -959,7 +1000,7 @@ int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_
 
 		generate_AES_key((unsigned char *)or_data[i].iv, AES_KEY_SIZE_BYTES);
 		or_data[i].uid = ci_info->ri_pool[route_index].relay_user_id;
-		generate_new_user_id(&(or_data[i].ord_enc.new_uid));
+		generate_new_user_id(ci_info, route_index, &(or_data[i].ord_enc.new_uid));
 		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 		or_data[i].ord_enc.next_pkg_port = message_port;
 		if(previous_route_index < 0) {
@@ -967,6 +1008,9 @@ int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_
 		} else {
 			inet_aton(ci_info->ri_pool[previous_route_index].relay_ip, (struct in_addr *)&(or_data[i].ord_enc.next_pkg_ip));
 		}
+
+		or_data[i].ord_enc.ord_checksum = 0;
+		get_ord_packet_checksum(&(or_data[i].ord_enc), &(or_data[i].ord_enc.ord_checksum));
 
 		memcpy((packet + or_offset), &(or_data[i]), cipher_text_byte_offset);
 		memcpy((encrypt_buffer + or_offset), &(or_data[i]), sizeof(onion_route_data));
@@ -1021,8 +1065,11 @@ int generate_onion_route_payload_from_route_info(conversation_info *ci_info, rou
 
 		generate_AES_key((unsigned char *)or_data[i].iv, AES_KEY_SIZE_BYTES);
 		or_data[i].uid = ci_info->ri_pool[route_index].payload_relay_user_id;
-		generate_new_user_id(&(or_data[i].ord_enc.new_uid));
+		generate_new_user_id(ci_info, route_index, &(or_data[i].ord_enc.new_uid));
 		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+
+		or_data[i].ord_enc.ord_checksum = 0;
+		get_ord_packet_checksum(&(or_data[i].ord_enc), &(or_data[i].ord_enc.ord_checksum));
 
 		memcpy((packet + or_offset), &(or_data[i]), cipher_text_byte_offset);
 		memcpy((encrypt_buffer + or_offset), &(or_data[i]), sizeof(onion_route_data));
