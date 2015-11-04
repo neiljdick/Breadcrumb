@@ -3,7 +3,7 @@
 #define ENABLE_LOGGING
 #define DEBUG_MODE
 //#define PRINT_PACKETS
-#define UID_CLASH_ENABLE
+//#define UID_CLASH_ENABLE
 
 #ifdef DEBUG_MODE
 	static int debug_convo_count = 0;
@@ -19,62 +19,45 @@ send_packet_node *sp_node;
 unsigned char user_id[USER_NAME_MAX_LENGTH];
 int index_of_active_conversation;
 conversation_info conversations[MAX_CONVERSATIONS];
+char friend_id[USER_NAME_MAX_LENGTH];
 
 int message_port, id_cache_port, cert_request_port;
 
-void init_globals(void);
+void *send_packet_handler(void *);
+void *receive_packet_handler(void *);
 
 int main(int argc, char const *argv[])
 {
 	int ret;
 	int free_convo_index;
-	char friend_id[USER_NAME_MAX_LENGTH];
-	pthread_t send_packet_thread;
+	pthread_t send_packet_thread, receive_packet_thread;
 
-	if(argc != 3) {
-		fprintf(stdout, "Usage: ./%s [USER ID] [PORT]\n", program_name);
-		exit(-1);
-	}
-	init_globals();
-
-	// TODO refactor into function which performs command line argument veracity check
-	if(strlen(argv[2]) > USER_NAME_MAX_LENGTH) {
-		fprintf(stdout, "Username must be less than %u characters\n", USER_NAME_MAX_LENGTH);
-		exit(-1);
-	}
-	if(strlen(argv[2]) < USER_NAME_MIN_LENGTH) {
-		fprintf(stdout, "Username must be more than %u characters\n", USER_NAME_MIN_LENGTH);
-		exit(-1);	
-	}
-	message_port = (unsigned int)atoi(argv[2]);
-	if(message_port > PORT_MAX) {
-		fprintf(stdout, "[MAIN THREAD] Port number (%u) must be less than %u\n", message_port, PORT_MAX);
-		exit(-5);
-	}
-	id_cache_port = message_port + 1;
-	cert_request_port = message_port + 2;
-	memset(user_id, 0, sizeof(user_id));
-	strncpy((char *)user_id, argv[1], (USER_NAME_MAX_LENGTH-1));
-	memset(friend_id, 0, sizeof(friend_id));
-	memset(conversations, 0, sizeof(conversations));
-
-	ret = init_send_packet_node();
+	ret = init_globals(argc, argv);
 	if(ret < 0) {
-		exit(-2);	
-	}
-	ret = init_send_packet_thread(&send_packet_thread);
-	if(ret < 0) {
-		exit(-2);	
+		return -2; // TODO error #defines
 	}
 	ret = initialize_packet_definitions("[MAIN THREAD]");
 	if(ret < 0) {
-		exit(-2);	
+		return -3;
 	}
 
-	get_friend_id(friend_id);
+
+	ret = init_networking("[MAIN THREAD]");
+	if(ret < 0) {
+		return -4;
+	}
+	ret = init_send_packet_thread(&send_packet_thread);
+	if(ret < 0) {
+		return -5;	
+	}
+	ret = init_receive_packet_thread(&receive_packet_thread);
+	if(ret < 0) {
+		return -6;	
+	}
+
 	free_convo_index = get_index_of_next_free_conversation(conversations);
 	if(free_convo_index < 0) {
-		return -1;
+		return -7;
 	}
 	init_chat(friend_id, &(conversations[free_convo_index]));
 
@@ -85,30 +68,165 @@ int main(int argc, char const *argv[])
 	return 0;
 }
 
-void init_globals(void)
+static int init_globals(int argc, char const *argv[])
 {
+	if(argc != 3) {
+		fprintf(stdout, "Usage: ./%s [USER ID] [PORT]\n", program_name);
+		exit(-1);
+	}
+
+	sem_init(&sp_node_sem, 0, 1);
 	sp_node = NULL;
 	index_of_active_conversation = 0;
-	message_port = 0;
-	id_cache_port = 0;
-	cert_request_port = 0;
+
+	if(strlen(argv[2]) > USER_NAME_MAX_LENGTH) {
+		fprintf(stdout, "Username must be less than %u characters\n", USER_NAME_MAX_LENGTH);
+		return -1;
+	}
+	if(strlen(argv[2]) < USER_NAME_MIN_LENGTH) {
+		fprintf(stdout, "Username must be more than %u characters\n", USER_NAME_MIN_LENGTH);
+		return -1;
+	}
+	message_port = (unsigned int)atoi(argv[2]);
+	if(message_port > PORT_MAX) {
+		fprintf(stdout, "[MAIN THREAD] Port number (%u) must be less than %u\n", message_port, PORT_MAX);
+		return -1;
+	}
+	id_cache_port = message_port + 1;
+	cert_request_port = message_port + 2;
+	memset(user_id, 0, sizeof(user_id));
+	strncpy((char *)user_id, argv[1], (USER_NAME_MAX_LENGTH-1));
+	memset(conversations, 0, sizeof(conversations));
+	memset(friend_id, 0, sizeof(friend_id));
+	
+	get_friend_id(friend_id);
 
 	#ifdef UID_CLASH_ENABLE
 		uid_clash_offset = get_pseudo_random_number(0) % 10000;
 	#endif
-}
-
-int init_send_packet_node(void)
-{
-	sem_init(&sp_node_sem, 0, 1);
-	sp_node = NULL;
 
 	return 0;
 }
 
-int init_send_packet_thread(pthread_t *send_packet_thread)
+static int init_networking(char *thread_id)
 {
-	int ret, errno_cached;
+
+	return 0;
+}
+
+static int init_receive_packet_thread(pthread_t *receive_packet_thread)
+{
+	int ret; 
+
+	if(receive_packet_thread == NULL) {
+		return -1;
+	}
+
+	ret = pthread_create(receive_packet_thread, NULL, receive_packet_handler, NULL);
+	if(ret != 0) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[MAIN THREAD] Failed to create receive packet thread, %s\n", strerror(errno));
+		#endif
+
+		return -1;
+	}
+
+	return 0;
+}
+
+void *receive_packet_handler(void *ptr)
+{
+	int ret, i;
+	int relay_socket, rp_listening_socket, bytes_read;
+	struct sockaddr_in relay_addr;
+	socklen_t sockaddr_len;
+	char packet[packet_size_bytes];
+
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "[RECEIVE PACKET THREAD] Receive packet thread begin\n");
+	#endif
+
+	ret = init_listening_socket("[RECEIVE PACKET THREAD]", message_port, &rp_listening_socket);
+	handle_pthread_ret("[RECEIVE PACKET THREAD]", ret, -1);
+
+	while(1) {
+		sleep(PACKET_TRANSMISSION_DELAY);
+
+		sockaddr_len = sizeof(relay_addr);
+		bzero((char *) &relay_addr, sizeof(relay_addr));
+		relay_socket = accept(rp_listening_socket, (struct sockaddr *)&relay_addr, &sockaddr_len);
+		if(relay_socket < 0) {
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "[RECEIVE PACKET THREAD] Failed to accept relay connection, %s\n", strerror(errno));
+			#endif
+
+			continue;
+		}
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[RECEIVE PACKET THREAD] %s:%d received packet\n", inet_ntoa(relay_addr.sin_addr), ntohs(relay_addr.sin_port));
+		#endif
+
+		bytes_read = 0;
+		for (i = 0; i < MAX_READ_ATTEMPTS; i++) {
+			bytes_read += read(relay_socket, (packet + bytes_read), (packet_size_bytes - bytes_read));
+			if(bytes_read == packet_size_bytes) {
+				handle_received_packet(packet);
+				break;
+			}
+		}
+		close(relay_socket);
+	}
+}
+
+static int handle_received_packet(char *packet)
+{
+	if(packet == NULL) {
+		return -1;
+	}
+
+
+	return 0;
+}
+
+static int init_listening_socket(char *thread_id, unsigned int port, int *listening_socket /* out */)
+{
+	struct sockaddr_in serv_addr;
+
+	if(port > PORT_MAX) {
+		return -1;	
+	}
+	if(listening_socket == NULL) {
+		return -1;
+	}
+
+	*listening_socket = socket(AF_INET, SOCK_STREAM, 0);
+	if(*listening_socket < 0){
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Failed to create stream socket\n", thread_id);
+		#endif
+
+		return -1;
+	}
+
+	bzero((char *) &serv_addr, sizeof(serv_addr));
+	serv_addr.sin_family = AF_INET;
+	serv_addr.sin_addr.s_addr = INADDR_ANY;
+	serv_addr.sin_port = htons(port);
+	if (bind(*listening_socket, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Error on binding\n", thread_id);
+		#endif
+
+		return -1;
+	}
+	listen(*listening_socket, LISTEN_BACKLOG_MAX);	
+
+	return 0;
+}
+
+static int init_send_packet_thread(pthread_t *send_packet_thread)
+{
+	int ret; 
 
 	if(send_packet_thread == NULL) {
 		return -1;
@@ -116,9 +234,8 @@ int init_send_packet_thread(pthread_t *send_packet_thread)
 
 	ret = pthread_create(send_packet_thread, NULL, send_packet_handler, NULL);
 	if(ret != 0) {
-		errno_cached = errno;
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to create send packet thread, %s\n", strerror(errno_cached));
+			fprintf(stdout, "[MAIN THREAD] Failed to create send packet thread, %s\n", strerror(errno));
 		#endif
 
 		return -1;
@@ -1224,4 +1341,27 @@ char* get_packet_type_str(packet_type type)
 	}
 
 	return "UNKNOWN";
+}
+
+void print_ret_code(char *thread_id, int ret)
+{
+	#ifdef ENABLE_LOGGING
+		{
+			fprintf(stdout, "%s Generic thread error\n", thread_id);
+		}
+	#endif
+}
+
+void handle_pthread_ret(char *thread_id, int ret, int clientfd)
+{
+	char *pthread_ret;
+
+	if(ret < 0) {
+		print_ret_code(thread_id, ret);
+		if(clientfd >= 0) {
+			close(clientfd);
+		}
+		pthread_ret = (char *)0;
+		pthread_exit(pthread_ret);
+	}
 }

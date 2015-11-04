@@ -1,7 +1,7 @@
 #include "networking.h"
 
 #define ENABLE_LOGGING
-#define DEBUG_MODE
+//#define DEBUG_MODE
 
 static int is_upnp_init=0;
 
@@ -14,6 +14,8 @@ static int init_globals(void)
 {
 	devlist = NULL;
 	memset(lanaddr, 0, sizeof(lanaddr));
+
+	return 0;
 }
 
 static int init_upnp(char *thread_id)
@@ -22,7 +24,6 @@ static int init_upnp(char *thread_id)
   	const char * multicastif = 0;
 	const char * minissdpdpath = 0;
 	int error;
-	unsigned char ttl = 2;
 	struct UPNPDev *device;
 
 	if(is_upnp_init != 0) {

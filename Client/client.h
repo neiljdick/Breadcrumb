@@ -29,6 +29,12 @@ char *program_name = "Client";
 #define NUM_CERT_READ_ATTEMPTS 					(10)
 #define NUM_BIND_ATTEMPTS 						(5)
 #define MAX_SEND_ATTEMPTS 						(5)
+#define MAIN_THREAD_SLEEP_TIME					(5)
+#define MAX_READ_ATTEMPTS 						(5)
+#define LISTEN_BACKLOG_MAX 						(5)
+
+#define PACKET_TRANSMISSION_DELAY				(3)
+#define MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER 	(3)
 
 #define PUBLIC_KEY_CERT_SIZE					(426)
 #define CONVERSATION_NAME_MAX_LENGTH 			(128)
@@ -38,11 +44,6 @@ char *program_name = "Client";
 #define MAX_CONVERSATIONS						(32)
 #define RELAY_IP_MAX_LENGTH						(16)
 #define RELAY_ID_LEN 							((SHA256_DIGEST_LENGTH * 2) + 1)
-
-#define MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER 	(3)
-
-#define PACKET_TRANSMISSION_DELAY				(3)
-#define MAIN_THREAD_SLEEP_TIME					(5)
 
 const char *public_cert_dir = ".relay_certs";
 
@@ -99,9 +100,15 @@ typedef struct send_packet_node
 	struct send_packet_node *next;
 } send_packet_node;
 
-int init_send_packet_node(void);
-int init_send_packet_thread(pthread_t *send_packet_thread);
-void *send_packet_handler(void *);
+static int init_globals(int argc, char const *argv[]);
+static int handle_received_packet(char *packet);
+static void print_ret_code(char *thread_id, int ret);
+static void handle_pthread_ret(char *thread_id, int ret, int clientfd);
+static int init_send_packet_thread(pthread_t *send_packet_thread);
+static int init_receive_packet_thread(pthread_t *receive_packet_thread);
+static int init_listening_socket(char *thread_id, unsigned int port, int *listening_socket /* out */);
+static int init_networking(char *thread_id);
+
 int place_packet_on_send_queue(unsigned char *packet, char *destination_ip, int destination_port);
 int get_friend_id(char *friend_id /* out */);
 int init_chat(char *friend_name, conversation_info *ci_out /* out */);

@@ -787,7 +787,9 @@ void handle_pthread_ret(char *thread_id, int ret, int clientfd)
 
 	if(ret < 0) {
 		print_ret_code(thread_id, ret);
-		close(clientfd);
+		if(clientfd >= 0) {
+			close(clientfd);
+		}
 		pthread_ret = (char *)0;
 		pthread_exit(pthread_ret);
 	}
