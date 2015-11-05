@@ -2,6 +2,7 @@
 
 #define ENABLE_LOGGING
 #define DEBUG_MODE
+//#define LAN_NETWORKING_MODE
 //#define PRINT_PACKETS
 //#define UID_CLASH_ENABLE
 
@@ -20,6 +21,7 @@ unsigned char user_id[USER_NAME_MAX_LENGTH];
 int index_of_active_conversation;
 conversation_info conversations[MAX_CONVERSATIONS];
 char friend_id[USER_NAME_MAX_LENGTH];
+char client_ip_addr[IP_BUF_MAX_LEN];
 
 int message_port, id_cache_port, cert_request_port;
 
@@ -40,7 +42,6 @@ int main(int argc, char const *argv[])
 	if(ret < 0) {
 		return -3;
 	}
-
 
 	ret = init_networking("[MAIN THREAD]");
 	if(ret < 0) {
@@ -98,6 +99,7 @@ static int init_globals(int argc, char const *argv[])
 	strncpy((char *)user_id, argv[1], (USER_NAME_MAX_LENGTH-1));
 	memset(conversations, 0, sizeof(conversations));
 	memset(friend_id, 0, sizeof(friend_id));
+	memset(client_ip_addr, 0, sizeof(client_ip_addr));
 	
 	get_friend_id(friend_id);
 
@@ -110,6 +112,51 @@ static int init_globals(int argc, char const *argv[])
 
 static int init_networking(char *thread_id)
 {
+	int ret;
+
+	#ifdef DEBUG_MODE
+		ret = get_eth_ip_address(thread_id, client_ip_addr, sizeof(client_ip_addr));
+		if(ret < 0) {
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "%s Failed to get eth ip address\n", thread_id);
+			#endif
+
+			return -1;
+		}
+	#else
+		#ifdef LAN_NETWORKING_MODE
+			ret = get_lan_ip_address(thread_id, client_ip_addr, sizeof(client_ip_addr));
+			if(ret < 0) {
+				#ifdef ENABLE_LOGGING
+					fprintf(stdout, "%s Failed to get lan ip address\n", thread_id);
+				#endif
+
+				return -1;
+			}
+		#else
+			ret = get_public_ip_address(thread_id, client_ip_addr, sizeof(client_ip_addr));
+			if(ret < 0) {
+				#ifdef ENABLE_LOGGING
+					fprintf(stdout, "%s Failed to get public ip address\n", thread_id);
+				#endif
+
+				return -1;
+			}
+
+			ret = add_port_mapping(thread_id, message_port, MSG_PORT_PROTOCOL);
+			if(ret < 0) {
+				#ifdef ENABLE_LOGGING
+					fprintf(stdout, "%s Failed to add port mapping to upnp router\n", thread_id);
+				#endif
+
+				return -1;
+			}
+		#endif
+	#endif	
+
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "%s Found my ip address: %s\n", thread_id, client_ip_addr);
+	#endif
 
 	return 0;
 }

@@ -1,6 +1,6 @@
 #include "networking.h"
 
-#define ENABLE_LOGGING
+//#define ENABLE_LOGGING
 //#define DEBUG_MODE
 
 static int is_upnp_init=0;
@@ -8,7 +8,7 @@ static int is_upnp_init=0;
 struct UPNPDev *devlist;
 struct UPNPUrls urls;
 struct IGDdatas data;
-char lanaddr[64];
+char lanaddr[IP_BUF_MAX_LEN];
 
 static int init_globals(void)
 {
@@ -77,7 +77,7 @@ int get_public_ip_address(char *thread_id, char *public_ip_addr, int public_ip_b
 	if(public_ip_addr == NULL) {
 		return -1;
 	}
-	if(public_ip_buf_len < 64) {
+	if(public_ip_buf_len < IP_BUF_MAX_LEN) {
 		return -1;
 	}
 
@@ -137,7 +137,7 @@ int get_eth_ip_address(char *thread_id, char *eth_ip_addr, int eth_ip_buf_len)
 	if(eth_ip_addr == NULL) {
 		return -1;
 	}
-	if(eth_ip_buf_len < 64) {
+	if(eth_ip_buf_len < IP_BUF_MAX_LEN) {
 		return -1;
 	}
 
@@ -160,7 +160,7 @@ int get_eth_ip_address(char *thread_id, char *eth_ip_addr, int eth_ip_buf_len)
 				if(ret == 0) {
 					ret = inet_aton(host, &in_addr_tmp);
 					if(ret != 0) {
-						memcpy(eth_ip_addr, host, 64);
+						memcpy(eth_ip_addr, host, IP_BUF_MAX_LEN);
 						found_eth_ip = 1;
 						break;
 					}
@@ -183,7 +183,7 @@ int get_eth_ip_address(char *thread_id, char *eth_ip_addr, int eth_ip_buf_len)
 int add_port_mapping(char *thread_id, unsigned int port, char *protocol)
 {
 	int ret;
-	char port_buf[64], intClient[40], intPort[6], duration[16];
+	char port_buf[IP_BUF_MAX_LEN], intClient[40], intPort[6], duration[16];
 
 	if(thread_id == NULL) {
 		return -1;
@@ -228,7 +228,7 @@ int add_port_mapping(char *thread_id, unsigned int port, char *protocol)
 int get_is_port_mapped(char *thread_id, unsigned int port, char *protocol, unsigned int *is_mapped)
 {
 	int ret;
-	char port_buf[64], intClient[40], intPort[6], duration[16];
+	char port_buf[IP_BUF_MAX_LEN], intClient[40], intPort[6], duration[16];
 
 	if(thread_id == NULL) {
 		return -1;
@@ -267,8 +267,8 @@ int get_is_port_mapped(char *thread_id, unsigned int port, char *protocol, unsig
 int main(int argc, char const *argv[])
 {
 	unsigned int is_mapped;
-	char external_ip_addr[64], lan_ip_addr[64];
-	char eth_ip_addr[64];
+	char external_ip_addr[IP_BUF_MAX_LEN], lan_ip_addr[IP_BUF_MAX_LEN];
+	char eth_ip_addr[IP_BUF_MAX_LEN];
 
 	get_lan_ip_address("[MAIN THREAD]", lan_ip_addr, sizeof(lan_ip_addr));
 	get_public_ip_address("[MAIN THREAD]", external_ip_addr, sizeof(external_ip_addr));

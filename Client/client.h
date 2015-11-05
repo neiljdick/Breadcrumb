@@ -22,10 +22,13 @@
 #include "../Shared/key_storage.h"
 #include "../Shared/cryptography.h"
 #include "../Shared/packet_definition.h"
+#include "../Shared/networking.h"
 
 char *program_name = "Client";
 
-#define PORT_MAX 								(65533)
+#ifndef PORT_MAX
+	#define PORT_MAX 								(65533)
+#endif
 #define NUM_CERT_READ_ATTEMPTS 					(10)
 #define NUM_BIND_ATTEMPTS 						(5)
 #define MAX_SEND_ATTEMPTS 						(5)
@@ -44,6 +47,8 @@ char *program_name = "Client";
 #define MAX_CONVERSATIONS						(32)
 #define RELAY_IP_MAX_LENGTH						(16)
 #define RELAY_ID_LEN 							((SHA256_DIGEST_LENGTH * 2) + 1)
+
+#define MSG_PORT_PROTOCOL						("TCP")
 
 const char *public_cert_dir = ".relay_certs";
 
