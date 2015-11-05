@@ -457,8 +457,6 @@ int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 
 	//send_dummy_packet_no_return_route(ci_out);
 	send_dummy_packet_with_return_route(ci_out);
-	send_dummy_packet_with_return_route(ci_out);
-	send_dummy_packet_with_return_route(ci_out);
 
 	return ret;
 }
@@ -829,6 +827,7 @@ int generate_random_route(conversation_info *ci_info, route_info *r_info)
 
 int generate_random_return_route(conversation_info *ci_info, route_info *r_info, route_info *return_r_info)
 {
+	int i;
 	unsigned int seed_val, index;
 
 	if((ci_info == NULL) || (r_info == NULL) || (return_r_info == NULL)) {
@@ -836,22 +835,23 @@ int generate_random_return_route(conversation_info *ci_info, route_info *r_info,
 	}
 
 	seed_val = (((unsigned int)user_id[1])<<24) | (((unsigned int)user_id[0])<<16) | (((unsigned int)user_id[3])<<8) | ((unsigned int)user_id[2]);
-
 	return_r_info->route_length = MIN_ROUTE_LENGTH + (get_pseudo_random_number(seed_val) % (MAX_ROUTE_LENGTH - (MIN_ROUTE_LENGTH - 1)));
-	if(return_r_info->route_length == 2) {
-		return_r_info->relay_route[0] = ci_info->index_of_entry_relay;
-	} else {
-		return_r_info->relay_route[1] = ci_info->index_of_entry_relay;
+	return_r_info->relay_route[(return_r_info->route_length - 1)] = ci_info->index_of_entry_relay;
 
-		while(1) {
-			index = get_pseudo_random_number(seed_val);
-			seed_val ^= index;
+	i = 0;
+	while(i < (return_r_info->route_length - 1)) {
+		index = get_pseudo_random_number(seed_val);
+		seed_val ^= index;
 
-			index %= RELAY_POOL_MAX_SIZE;
-			if((ci_info->ri_pool[index].is_active == 1) && (index != ci_info->index_of_entry_relay)) {
+		index %= RELAY_POOL_MAX_SIZE;
+		if((ci_info->ri_pool[index].is_active == 1) && (index != ci_info->index_of_entry_relay)) {
+			if(i > 0) {
+				if(index != return_r_info->relay_route[(i - 1)]) {
+					return_r_info->relay_route[i++] = index;
+				}
+			} else {
 				if(index != r_info->relay_route[(r_info->route_length - 1)]) {
-					return_r_info->relay_route[0] = index;
-					break;
+					return_r_info->relay_route[i++] = index;
 				}
 			}
 		}
@@ -870,12 +870,6 @@ int send_dummy_packet_no_return_route(conversation_info *ci_info)
 		return -1;
 	}
 
-	ret = fill_buf_with_random_data((unsigned char *)&dummy_packet_payload, sizeof(dummy_packet_payload));
-	if(ret < 0) {
-		return -1;
-	}
-	dummy_packet_payload.type = DUMMY_PACKET_NO_RETURN_ROUTE;
-
 	ret = generate_random_route(ci_info, &r_info);
 	if(ret < 0) {
 		return -1;
@@ -887,6 +881,12 @@ int send_dummy_packet_no_return_route(conversation_info *ci_info)
 			fprintf(stdout, "[MAIN THREAD] Route %u, index = %u, ip = %s\n", (i + 1), r_info.relay_route[i], ci_info->ri_pool[r_info.relay_route[i]].relay_ip);	
 		}
 	#endif
+
+	ret = fill_buf_with_random_data((unsigned char *)&dummy_packet_payload, sizeof(dummy_packet_payload));
+	if(ret < 0) {
+		return -1;
+	}
+	dummy_packet_payload.type = DUMMY_PACKET_NO_RETURN_ROUTE;
 	
 	ret = send_packet(DUMMY_PACKET, ci_info, &r_info, &dummy_packet_payload, NULL);
 	if(ret < 0) {
@@ -901,16 +901,11 @@ int send_dummy_packet_with_return_route(conversation_info *ci_info)
 	int ret;
 	route_info r_info, return_r_info;
 	payload_data dummy_packet_payload;
+	uint64_t ip_first_return_relay;
 
 	if(ci_info == NULL) {
 		return -1;
 	}
-
-	ret = fill_buf_with_random_data((unsigned char *)&dummy_packet_payload, sizeof(dummy_packet_payload));
-	if(ret < 0) {
-		return -1;
-	}
-	dummy_packet_payload.type = DUMMY_PACKET_W_RETURN_ROUTE;
 
 	ret = generate_random_route(ci_info, &r_info);
 	if(ret < 0) {
@@ -930,11 +925,29 @@ int send_dummy_packet_with_return_route(conversation_info *ci_info)
 	}
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "[MAIN THREAD] Return route length = %u\n", return_r_info.route_length);
-		for (i = 0; i < return_r_info.route_length - 1; i++) { // TODO
-			fprintf(stdout, "[MAIN THREAD] Return route %u, index = %u, ip = %s\n", (i + 1), return_r_info.relay_route[i], ci_info->ri_pool[return_r_info.relay_route[i]].relay_ip);	
+		for (i = 0; i < return_r_info.route_length - 1; i++) {
+			fprintf(stdout, "[MAIN THREAD] Return route %u, index = %u, ip = %s\n", (i + 1), return_r_info.relay_route[i], ci_info->ri_pool[return_r_info.relay_route[i]].relay_ip);
 		}
 	#endif
 	
+	ret = fill_buf_with_random_data((unsigned char *)&dummy_packet_payload, sizeof(dummy_packet_payload));
+	if(ret < 0) {
+		return -1;
+	}
+	ret = generate_return_onion_route_data_from_route_info(ci_info, &return_r_info, dummy_packet_payload.payload);
+	if(ret < 0) {
+		return -1;
+	}
+	ret = generate_return_onion_route_payload_from_route_info(ci_info, &return_r_info, dummy_packet_payload.payload);
+	if(ret < 0) {
+		return -1;
+	}
+	dummy_packet_payload.type = DUMMY_PACKET_W_RETURN_ROUTE;
+	dummy_packet_payload.onion_r1 = message_port;
+	inet_aton(ci_info->ri_pool[return_r_info.relay_route[0]].relay_ip, (struct in_addr *)&ip_first_return_relay);
+	dummy_packet_payload.client_id = (uint32_t)((ip_first_return_relay >> 32) & 0xFFFFFFFF);
+	dummy_packet_payload.conversation_id = (uint32_t)(ip_first_return_relay & 0xFFFFFFFF);
+
 	ret = send_packet(DUMMY_PACKET, ci_info, &r_info, &dummy_packet_payload, NULL);
 	if(ret < 0) {
 		return -1;
@@ -1261,6 +1274,127 @@ int generate_onion_route_payload_from_route_info(conversation_info *ci_info, rou
 	return 0;
 }
 
+int generate_return_onion_route_data_from_route_info(conversation_info *ci_info, route_info *return_r_info, unsigned char *packet)
+{
+	int i, ret;
+	int route_index, previous_route_index;
+	unsigned int or_offset;
+	onion_route_data or_data[MAX_ROUTE_LENGTH];
+	unsigned char encrypt_buffer[packet_size_bytes];
+
+	if((ci_info == NULL) || (return_r_info == NULL) || (packet == NULL)) {
+		return -1;
+	}
+	if(return_r_info->route_length > MAX_ROUTE_LENGTH) {
+		return -1;
+	}
+
+	ret = fill_buf_with_random_data((unsigned char *)or_data, sizeof(or_data));
+	if(ret < 0) {
+		return -1;
+	}
+
+	previous_route_index = -1;
+	or_offset = (return_r_info->route_length - 1) * sizeof(onion_route_data);
+	for (i = (return_r_info->route_length - 1); i >= 0; i--) {
+		route_index = return_r_info->relay_route[i];
+		if((route_index < 0) || (route_index >= RELAY_POOL_MAX_SIZE)) {
+			return -1;
+		}
+		if(ci_info->ri_pool[route_index].is_active != 1) {
+			return -1;
+		}
+
+		generate_AES_key((unsigned char *)or_data[i].iv, AES_KEY_SIZE_BYTES);
+		or_data[i].uid = ci_info->ri_pool[route_index].return_route_user_id;
+		generate_new_user_id(ci_info, route_index, &(or_data[i].ord_enc.new_uid));
+		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		or_data[i].ord_enc.next_pkg_port = message_port;
+		if(previous_route_index < 0) {
+			inet_aton(client_ip_addr, (struct in_addr *)&(or_data[i].ord_enc.next_pkg_ip));
+		} else {
+			inet_aton(ci_info->ri_pool[previous_route_index].relay_ip, (struct in_addr *)&(or_data[i].ord_enc.next_pkg_ip));
+		}
+
+		or_data[i].ord_enc.ord_checksum = 0;
+		get_ord_packet_checksum(&(or_data[i].ord_enc), &(or_data[i].ord_enc.ord_checksum));
+
+		memcpy((packet + or_offset), &(or_data[i]), cipher_text_byte_offset);
+		memcpy((encrypt_buffer + or_offset), &(or_data[i]), sizeof(onion_route_data));
+		ret = aes_encrypt_block("[MAIN THREAD]", (encrypt_buffer + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset), 
+									ci_info->ri_pool[route_index].return_route_aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[i].iv), (packet + or_offset + cipher_text_byte_offset));
+		if(ret < 0) {
+			return -1;
+		}
+		ci_info->ri_pool[route_index].return_route_user_id = or_data[i].ord_enc.new_uid;
+		memcpy(ci_info->ri_pool[route_index].return_route_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		memcpy((encrypt_buffer + or_offset + cipher_text_byte_offset), (packet + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset));
+
+		previous_route_index = route_index;
+		or_offset -= sizeof(onion_route_data);
+	}
+
+	return 0;
+}
+
+int generate_return_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *return_r_info, unsigned char *packet)
+{
+	int i, ret;
+	int route_index;
+	unsigned int or_offset;
+	onion_route_data or_data[MAX_ROUTE_LENGTH];
+	unsigned char encrypt_buffer[packet_size_bytes];
+
+	if((ci_info == NULL) || (return_r_info == NULL) || (packet == NULL)) {
+		return -1;
+	}
+	if(return_r_info->route_length > MAX_ROUTE_LENGTH) {
+		return -1;
+	}
+
+	ret = fill_buf_with_random_data((unsigned char *)or_data, sizeof(or_data));
+	if(ret < 0) {
+		return -1;
+	}
+
+	or_offset = (return_r_info->route_length - 1) * sizeof(onion_route_data);
+	for (i = (return_r_info->route_length - 1); i >= 0; i--) {
+		route_index = return_r_info->relay_route[i];
+		if((route_index < 0) || (route_index >= RELAY_POOL_MAX_SIZE)) {
+			return -1;
+		}
+		if(ci_info->ri_pool[route_index].is_active != 1) {
+			return -1;
+		}
+
+		generate_AES_key((unsigned char *)or_data[i].iv, AES_KEY_SIZE_BYTES);
+		or_data[i].uid = ci_info->ri_pool[route_index].return_route_payload_user_id;
+		generate_new_user_id(ci_info, route_index, &(or_data[i].ord_enc.new_uid));
+		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		or_data[i].ord_enc.next_pkg_port = message_port;
+
+		or_data[i].ord_enc.ord_checksum = 0;
+		get_ord_packet_checksum(&(or_data[i].ord_enc), &(or_data[i].ord_enc.ord_checksum));
+
+		memcpy((packet + payload_start_byte + or_offset), &(or_data[i]), cipher_text_byte_offset);
+		memcpy((encrypt_buffer + or_offset), &(or_data[i]), sizeof(onion_route_data));
+		ret = aes_encrypt_block("[MAIN THREAD]", (encrypt_buffer + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset), 
+									ci_info->ri_pool[route_index].return_route_payload_aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[i].iv), 
+										(packet + payload_start_byte + or_offset + cipher_text_byte_offset));
+		if(ret < 0) {
+			return -1;
+		}
+		ci_info->ri_pool[route_index].return_route_payload_user_id = or_data[i].ord_enc.new_uid;
+		memcpy(ci_info->ri_pool[route_index].return_route_payload_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		memcpy((encrypt_buffer + or_offset + cipher_text_byte_offset), (packet + payload_start_byte + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset));
+
+		or_offset -= sizeof(onion_route_data);
+	}
+
+	return 0;
+}
+
+
 int place_packet_on_send_queue(unsigned char *packet, char *destination_ip, int destination_port)
 {
 	send_packet_node *sp, *sp_tmp;
@@ -1365,16 +1499,30 @@ int print_conversation(char *thread_id, conversation_info *ci_info)
 			fprintf(stdout, "%s ------------ Relay %d -------------\n", thread_id, i);
 			fprintf(stdout, "%s Relay ID = %s\n", thread_id, ci_info->ri_pool[i].relay_id);
 			fprintf(stdout, "%s Relay IP = %s\n", thread_id, ci_info->ri_pool[i].relay_ip);
+			
 			for (j = 0; j < AES_KEY_SIZE_BYTES; j++) {
 				sprintf((buf + (j*2)), "%02x", 0xff & ci_info->ri_pool[i].aes_key[j]);
 			}
 			fprintf(stdout, "%s Relay Key = %s\n", thread_id, buf);
 			fprintf(stdout, "%s Relay User ID = %u\n", thread_id, ci_info->ri_pool[i].relay_user_id);
+
 			for (j = 0; j < AES_KEY_SIZE_BYTES; j++) {
 				sprintf((buf + (j*2)), "%02x", 0xff & ci_info->ri_pool[i].payload_aes_key[j]);
 			}
 			fprintf(stdout, "%s Payload Relay Key = %s\n", thread_id, buf);
 			fprintf(stdout, "%s Payload Relay User ID = %u\n", thread_id, ci_info->ri_pool[i].payload_relay_user_id);
+
+			for (j = 0; j < AES_KEY_SIZE_BYTES; j++) {
+				sprintf((buf + (j*2)), "%02x", 0xff & ci_info->ri_pool[i].return_route_aes_key[j]);
+			}
+			fprintf(stdout, "%s Return Route Relay Key = %s\n", thread_id, buf);
+			fprintf(stdout, "%s Return Route Relay User ID = %u\n", thread_id, ci_info->ri_pool[i].return_route_user_id);
+
+			for (j = 0; j < AES_KEY_SIZE_BYTES; j++) {
+				sprintf((buf + (j*2)), "%02x", 0xff & ci_info->ri_pool[i].return_route_payload_aes_key[j]);
+			}
+			fprintf(stdout, "%s Return Route Relay Key = %s\n", thread_id, buf);
+			fprintf(stdout, "%s Return Route Relay User ID = %u\n", thread_id, ci_info->ri_pool[i].return_route_payload_user_id);
 		}
 	}
 	fprintf(stdout, "%s ------------------------------------\n", thread_id);

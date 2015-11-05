@@ -604,9 +604,8 @@ void *handle_msg_client_thread(void *ptr)
 
 	if(or_data_decrypted_ptr->ord_enc.next_pkg_ip == 0) {
 		pd_ptr = (payload_data *)(packet_data + payload_start_byte);
-		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "%s Received non-route packet, type = %s\n", thread_id_buf, get_string_for_payload_type(pd_ptr->type));
-		#endif
+
+		handle_non_route_packet(thread_id_buf, pd_ptr);
 	} else {
 		next_addr.s_addr = or_data_decrypted_ptr->ord_enc.next_pkg_ip;
 		#ifdef ENABLE_LOGGING
@@ -623,6 +622,34 @@ void *handle_msg_client_thread(void *ptr)
 	close(client_socket);
 	pthread_ret = (char *)0;
 	pthread_exit(pthread_ret);
+}
+
+int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
+{
+	int ret;
+	struct in_addr next_addr;
+	uint16_t next_port;
+	unsigned char packet_data[packet_size_bytes];
+
+	switch(pd_ptr->type) {
+		case DUMMY_PACKET_W_RETURN_ROUTE:
+			next_addr.s_addr = (((uint64_t)pd_ptr->client_id) << 32) | ((uint64_t)pd_ptr->conversation_id);
+			next_port = pd_ptr->onion_r1;
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "%s Received non-route packet, type = %s. Next ip = %s, port = %u\n", thread_id, get_string_for_payload_type(pd_ptr->type), inet_ntoa(next_addr), next_port);
+			#endif
+
+			ret = fill_buf_with_random_data(packet_data, packet_size_bytes);
+			if(ret < 0) {
+				return -1;
+			}
+			memcpy(packet_data, pd_ptr->payload, sizeof(pd_ptr->payload));
+
+			send_packet_to_relay(packet_data, inet_ntoa(next_addr), next_port);
+		break;
+	}
+
+	return 0;
 }
 
 void *handle_id_cache_thread(void *ptr)
@@ -706,6 +733,8 @@ int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destin
 		return -1;
 	}
 
+	apply_packet_mixing_delay();
+
 	// Lets randomize the source port (otherwise linux just increments by 3 each time)
 	bzero((char *) &client_addr, sizeof(client_addr));
 	client_addr.sin_family = AF_INET;
@@ -766,6 +795,17 @@ int get_thread_pool_id_from_index(int index, char *pool_id /* out */)
 	} else {
 		memcpy(pool_id, unknown_str, strlen(unknown_str));
 	}
+
+	return 0;
+}
+
+int apply_packet_mixing_delay(void)
+{
+	unsigned int sleep_time_usec;
+
+	sleep_time_usec = get_pseudo_random_number(0);
+	sleep_time_usec %= MAX_PACKET_TRANSMIT_DELAY_USEC;
+	usleep(sleep_time_usec);
 
 	return 0;
 }

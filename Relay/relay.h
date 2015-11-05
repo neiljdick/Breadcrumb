@@ -28,6 +28,7 @@ const char *unknown_str 			= "UNKNOWN";
 
 #define PORT_MAX 						(65533)
 #define LISTEN_BACKLOG_MAX 				(50)
+#define MAX_PACKET_TRANSMIT_DELAY_USEC	(100000) // TODO determine experimentally?
 
 #define NUM_MSG_HANDLER_THREADS 		(500)
 #define MSG_HANDLER_THREAD_MAX_AGE 		(5)
@@ -80,6 +81,8 @@ void *client_id_cache_handler(void *ptr);
 int initialize_thread_pools();
 int get_index_of_unused_thread_descriptor(client_thread_description *cthread_pool, unsigned int thread_pool_length, int *index /* out */);
 int get_thread_pool_id_from_index(int index, char *pool_id /* out */);
+int handle_non_route_packet(char *thread_id, payload_data *pd_ptr);
 int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destination_port);
+int apply_packet_mixing_delay(void);
 
 #endif
