@@ -457,6 +457,8 @@ int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 
 	//send_dummy_packet_no_return_route(ci_out);
 	send_dummy_packet_with_return_route(ci_out);
+	send_dummy_packet_with_return_route(ci_out);
+	send_dummy_packet_with_return_route(ci_out);
 
 	return ret;
 }
@@ -1188,6 +1190,8 @@ int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_
 		if(ret < 0) {
 			return -1;
 		}
+		ci_info->ri_pool[route_index].relay_user_id = or_data[i].ord_enc.new_uid;
+		memcpy(ci_info->ri_pool[route_index].aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 		memcpy((encrypt_buffer + or_offset + cipher_text_byte_offset), (packet + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset));
 
 		previous_route_index = route_index;
@@ -1247,6 +1251,8 @@ int generate_onion_route_payload_from_route_info(conversation_info *ci_info, rou
 		if(ret < 0) {
 			return -1;
 		}
+		ci_info->ri_pool[route_index].payload_relay_user_id = or_data[i].ord_enc.new_uid;
+		memcpy(ci_info->ri_pool[route_index].payload_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 		memcpy((encrypt_buffer + or_offset + cipher_text_byte_offset), (packet + or_offset + cipher_text_byte_offset), (packet_size_bytes - or_offset - cipher_text_byte_offset));
 
 		or_offset -= sizeof(onion_route_data);
