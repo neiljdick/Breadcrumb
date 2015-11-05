@@ -901,7 +901,6 @@ int send_dummy_packet_with_return_route(conversation_info *ci_info)
 	int ret;
 	route_info r_info, return_r_info;
 	payload_data dummy_packet_payload;
-	uint64_t ip_first_return_relay;
 
 	if(ci_info == NULL) {
 		return -1;
@@ -942,15 +941,50 @@ int send_dummy_packet_with_return_route(conversation_info *ci_info)
 	if(ret < 0) {
 		return -1;
 	}
-	dummy_packet_payload.type = DUMMY_PACKET_W_RETURN_ROUTE;
-	dummy_packet_payload.onion_r1 = message_port;
-	inet_aton(ci_info->ri_pool[return_r_info.relay_route[0]].relay_ip, (struct in_addr *)&ip_first_return_relay);
-	dummy_packet_payload.client_id = (uint32_t)((ip_first_return_relay >> 32) & 0xFFFFFFFF);
-	dummy_packet_payload.conversation_id = (uint32_t)(ip_first_return_relay & 0xFFFFFFFF);
+	ret = generate_packet_metadata(ci_info, DUMMY_PACKET_W_RETURN_ROUTE, &return_r_info, &dummy_packet_payload);
+	if(ret < 0) {
+		return -1;
+	}
 
 	ret = send_packet(DUMMY_PACKET, ci_info, &r_info, &dummy_packet_payload, NULL);
 	if(ret < 0) {
 		return -1;
+	}
+
+	return 0;
+}
+
+int generate_packet_metadata(conversation_info *ci_info, payload_type p_type, route_info *return_r_info, payload_data *payload)
+{
+	uint64_t ip_first_return_relay;
+
+	if((ci_info == NULL) || (return_r_info == NULL) || (payload == NULL)) {
+		return -1;
+	}
+
+	switch(p_type) {
+		case DUMMY_PACKET_NO_RETURN_ROUTE:
+			payload->type = DUMMY_PACKET_W_RETURN_ROUTE;
+		break;
+		case DUMMY_PACKET_W_RETURN_ROUTE:
+			payload->type = DUMMY_PACKET_W_RETURN_ROUTE;
+			payload->onion_r1 = message_port;
+			inet_aton(ci_info->ri_pool[return_r_info->relay_route[0]].relay_ip, (struct in_addr *)&ip_first_return_relay);
+			payload->client_id = (uint32_t)((ip_first_return_relay >> 32) & 0xFFFFFFFF);
+			payload->conversation_id = (uint32_t)(ip_first_return_relay & 0xFFFFFFFF);
+		break;
+		case SINGLE_RETURN_ROUTE:
+			payload->type = SINGLE_RETURN_ROUTE;
+			// TODO
+		break;
+		case DUAL_RETURN_ROUTE:
+			payload->type = DUAL_RETURN_ROUTE;
+			// TODO
+		break;
+		case MESSAGE_PACKET:
+			payload->type = MESSAGE_PACKET;
+			// TODO
+		break;
 	}
 
 	return 0;

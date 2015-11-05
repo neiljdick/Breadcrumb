@@ -135,6 +135,7 @@ int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_
 int generate_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */);
 int generate_return_onion_route_data_from_route_info(conversation_info *ci_info, route_info *return_r_info, unsigned char *packet);
 int generate_return_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *return_r_info, unsigned char *packet);
+int generate_packet_metadata(conversation_info *ci_info, payload_type p_type, route_info *return_r_info, payload_data *payload);
 int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info, payload_data *payload, void *other);
 
 #endif
