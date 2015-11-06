@@ -50,6 +50,10 @@ char *program_name = "Client";
 
 #define MSG_PORT_PROTOCOL						("TCP")
 
+#define THREAD_COMMAND_DATA_SIZE 				(512)
+#define THREAD_RETURN_PACKET_CONFIRM_SIZE		(64)
+#define MAX_CHECK_NODE_TIME_SEC					(10)
+
 const char *public_cert_dir = ".relay_certs";
 
 typedef enum {
@@ -105,6 +109,39 @@ typedef struct send_packet_node
 	struct send_packet_node *next;
 } send_packet_node;
 
+typedef enum {
+	NO_COMMAND				= 0,
+	VERIFY_RETURN_DATA,
+	PLACE_LATEST_IN_QUEUE
+} command;
+
+typedef enum {
+	IDLE_STATUS 			= 0,
+	IN_PROGRESS,
+	COMPLETE
+} command_status;
+
+typedef enum {
+	FAILURE 				= 0,
+	SUCCESS
+} command_return_code;
+
+typedef struct command_attempts
+{
+	uint16_t num_attempts;
+	uint16_t num_succeeded;
+	uint16_t num_failed;
+} command_attempts;
+
+typedef struct thread_comm
+{
+	command curr_command;
+	command_status curr_status;
+	command_return_code curr_return_code;
+	command_attempts curr_attempts;
+	uint8_t command_data[THREAD_COMMAND_DATA_SIZE];
+} thread_comm;
+
 static int init_globals(int argc, char const *argv[]);
 static int handle_received_packet(char *packet);
 static void print_ret_code(char *thread_id, int ret);
@@ -113,8 +150,13 @@ static int init_send_packet_thread(pthread_t *send_packet_thread);
 static int init_receive_packet_thread(pthread_t *receive_packet_thread);
 static int init_listening_socket(char *thread_id, unsigned int port, int *listening_socket /* out */);
 static int init_networking(char *thread_id);
+static int initialize_relay_verification_command(payload_data *verification_payload);
+static int wait_for_command_completion(int max_command_time, int *command_ret_status);
+static int verify_entry_relay_online(char *thread_id, conversation_info *ci_info, int *entry_relay_online);
+static int verify_relay_online(char *thread_id, conversation_info *ci_info, int relay_index, int *relay_is_online);
 
 int place_packet_on_send_queue(unsigned char *packet, char *destination_ip, int destination_port);
+int get_number_of_packets_in_send_queue(int *num_packets);
 int get_friend_id(char *friend_id /* out */);
 int init_chat(char *friend_name, conversation_info *ci_out /* out */);
 int get_relay_public_certificates_debug(conversation_info *ci_info);
@@ -131,6 +173,7 @@ int print_conversation(char *thread_id, conversation_info *ci_info);
 char* get_packet_type_str(packet_type type);
 int send_dummy_packet_no_return_route(conversation_info *ci_info);
 int send_dummy_packet_with_return_route(conversation_info *ci_info);
+int verify_entry_relay_online(char *thread_id, conversation_info *ci_info, int *entry_relay_online);
 int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_info *r_info, unsigned char *packet);
 int generate_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */);
 int generate_return_onion_route_data_from_route_info(conversation_info *ci_info, route_info *return_r_info, unsigned char *packet);
