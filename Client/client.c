@@ -5,6 +5,7 @@
 //#define LAN_NETWORKING_MODE
 //#define PRINT_PACKETS
 //#define UID_CLASH_ENABLE
+//#define PRINT_UID_GENERATION
 
 #ifdef DEBUG_MODE
 	static int debug_convo_count = 0;
@@ -27,6 +28,8 @@ char friend_id[USER_NAME_MAX_LENGTH];
 char client_ip_addr[IP_BUF_MAX_LEN];
 
 int message_port, id_cache_port, cert_request_port;
+
+char curr_send_packet_char = '-';
 
 void *send_packet_handler(void *);
 void *receive_packet_handler(void *);
@@ -214,7 +217,7 @@ void *receive_packet_handler(void *ptr)
 			continue;
 		}
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[RECEIVE PACKET THREAD] %s:%d received packet\n", inet_ntoa(relay_addr.sin_addr), ntohs(relay_addr.sin_port));
+			fprintf(stdout, "\r[RECEIVE PACKET THREAD] %s:%d received packet\n", inet_ntoa(relay_addr.sin_addr), ntohs(relay_addr.sin_port));
 		#endif
 
 		bytes_read = 0;
@@ -231,12 +234,19 @@ void *receive_packet_handler(void *ptr)
 
 static int handle_received_packet(char *packet)
 {
-	int i;
 	int ret;
 
 	if(packet == NULL) {
 		return -1;
 	}
+
+	#ifdef PRINT_PACKETS 
+		fprintf(stdout, "Received payload: ");
+		for(i = 0; i < packet_size_bytes; i++) {
+			fprintf(stdout, "%02x", (unsigned char)packet[i]);
+		}
+		fprintf(stdout, "\n");
+	#endif
 
 	sem_wait(&th_comm_sem);
 	if(th_comm.curr_status == IN_PROGRESS) {
@@ -246,13 +256,6 @@ static int handle_received_packet(char *packet)
 				th_comm.curr_status = COMPLETE;
 			break;
 			case VERIFY_RETURN_DATA:
-				
-				fprintf(stdout, "Received payload: ");
-				for(i = 0; i < THREAD_RETURN_PACKET_CONFIRM_SIZE; i++) {
-					fprintf(stdout, "%x", (unsigned char)packet[i]);
-				}
-				fprintf(stdout, "\n");
-
 				ret = memcmp(packet, th_comm.command_data, THREAD_RETURN_PACKET_CONFIRM_SIZE);
 				if(ret == 0) {
 					th_comm.curr_status = COMPLETE;
@@ -334,7 +337,7 @@ void *send_packet_handler(void *ptr)
 
 		if(sp_node == NULL) {
 			#ifdef ENABLE_LOGGING
-				fprintf(stdout, "-");
+				fprintf(stdout, "\r%c", curr_send_packet_char);
 				fflush(stdout);
 			#endif
 		} else {
@@ -347,7 +350,7 @@ void *send_packet_handler(void *ptr)
 				#endif
 			}
 			#ifdef ENABLE_LOGGING
-				fprintf(stdout, ".");
+				fprintf(stdout, "\r%c", get_send_packet_char());
 				fflush(stdout);
 			#endif
 
@@ -441,7 +444,7 @@ int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destin
 
 int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 {
-	int ret;
+	int ret, all_relays_online;
 	//int convo_valid;
 
 	if((friend_name == NULL) || (ci_out == NULL)) {
@@ -506,14 +509,7 @@ int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 		return -1;
 	}
 
-	//send_dummy_packet_no_return_route(ci_out);
-	//send_dummy_packet_with_return_route(ci_out);
-	//verify_entry_relay_online("[MAIN THREAD]", ci_out, &ret);
-
-	verify_relay_online("[MAIN THREAD]", ci_out, ci_out->index_of_entry_relay, &ret);
-	//verify_relay_online("[MAIN THREAD]", ci_out, 1, &ret);
-	//verify_relay_online("[MAIN THREAD]", ci_out, 2, &ret);
-	//verify_relay_online("[MAIN THREAD]", ci_out, 3, &ret);
+	verify_all_relays_online("[MAIN THREAD]", ci_out, &all_relays_online);
 
 	return ret;
 }
@@ -792,7 +788,7 @@ int generate_new_user_id(conversation_info *ci_info, int relay_index, unsigned i
 	#endif
 	*uid = relay_user_id;
 	
-	#ifdef ENABLE_LOGGING
+	#ifdef PRINT_UID_GENERATION 
 		fprintf(stdout, "[MAIN THREAD] Generated new user ID = %u, relay_index = %u, max = %u\n", *uid, relay_index, ci_info->ri_pool[relay_index].max_uid);
 	#endif
 
@@ -859,7 +855,6 @@ int generate_random_route(conversation_info *ci_info, route_info *r_info)
 
 	memset(index_of_relays_used, 0, RELAY_POOL_MAX_SIZE);
 	seed_val = (((unsigned int)user_id[1])<<24) | (((unsigned int)user_id[0])<<16) | (((unsigned int)user_id[3])<<8) | ((unsigned int)user_id[2]);
-
 	r_info->relay_route[0] = ci_info->index_of_entry_relay;
 	r_info->route_length = MIN_ROUTE_LENGTH + (get_pseudo_random_number(seed_val) % (MAX_ROUTE_LENGTH - (MIN_ROUTE_LENGTH - 1)));
 
@@ -892,7 +887,7 @@ int generate_random_return_route(conversation_info *ci_info, route_info *r_info,
 	}
 
 	seed_val = (((unsigned int)user_id[1])<<24) | (((unsigned int)user_id[0])<<16) | (((unsigned int)user_id[3])<<8) | ((unsigned int)user_id[2]);
-	return_r_info->route_length = MIN_ROUTE_LENGTH + (get_pseudo_random_number(seed_val) % (MAX_ROUTE_LENGTH - (MIN_ROUTE_LENGTH - 1)));
+	return_r_info->route_length = MIN_RETURN_ROUTE_LENGTH + (get_pseudo_random_number(seed_val) % (MAX_ROUTE_LENGTH - (MIN_RETURN_ROUTE_LENGTH - 1)));
 	return_r_info->relay_route[(return_r_info->route_length - 1)] = ci_info->index_of_entry_relay;
 
 	i = 0;
@@ -936,8 +931,32 @@ int generate_payload_metadata_for_entry_relay(char *thread_id, char* ip_addr, pa
 
 static int initialize_relay_verification_command(payload_data *verification_payload)
 {
-	int i;
+	if(verification_payload == NULL) {
+		return -1;
+	}
 
+	sem_wait(&th_comm_sem);
+	th_comm.curr_command = VERIFY_RETURN_DATA; 
+	th_comm.curr_status = IN_PROGRESS;
+	th_comm.curr_attempts.num_attempts = 0;
+	memcpy(th_comm.command_data, (verification_payload->payload + sizeof(onion_route_data)), THREAD_RETURN_PACKET_CONFIRM_SIZE);
+
+	#ifdef PRINT_PACKETS
+		int i;
+		fprintf(stdout, "Init payload: ");
+		for(i = 0; i < THREAD_RETURN_PACKET_CONFIRM_SIZE; i++) {
+			fprintf(stdout, "%02x", th_comm.command_data[i]);
+		}
+		fprintf(stdout, "\n");
+	#endif
+
+	sem_post(&th_comm_sem);
+
+	return 0;
+}
+
+static int initialize_entry_relay_verification_command(payload_data *verification_payload)
+{
 	if(verification_payload == NULL) {
 		return -1;
 	}
@@ -948,11 +967,14 @@ static int initialize_relay_verification_command(payload_data *verification_payl
 	th_comm.curr_attempts.num_attempts = 0;
 	memcpy(th_comm.command_data, verification_payload->payload, THREAD_RETURN_PACKET_CONFIRM_SIZE);
 
-	fprintf(stdout, "Init payload: ");
-	for(i = 0; i < THREAD_RETURN_PACKET_CONFIRM_SIZE; i++) {
-		fprintf(stdout, "%x", th_comm.command_data[i]);
-	}
-	fprintf(stdout, "\n");
+	#ifdef PRINT_PACKETS
+		int i;
+		fprintf(stdout, "Init payload: ");
+		for(i = 0; i < THREAD_RETURN_PACKET_CONFIRM_SIZE; i++) {
+			fprintf(stdout, "%02x", th_comm.command_data[i]);
+		}
+		fprintf(stdout, "\n");
+	#endif
 
 	sem_post(&th_comm_sem);
 
@@ -982,6 +1004,59 @@ static int wait_for_command_completion(int max_command_time, int *command_ret_st
 	return 0;
 }
 
+static int verify_all_relays_online(char *thread_id, conversation_info *ci_info, int *all_relays_online)
+{
+	int i, ret, relay_is_online;
+	unsigned int num_verified, total_to_verify;
+	unsigned int seed_val, index;
+	char index_of_relays_used[RELAY_POOL_MAX_SIZE];
+
+	if(ci_info == NULL) {
+		return -1;
+	}
+
+	total_to_verify = 0;
+	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
+		if(ci_info->ri_pool[i].is_active == 1) {
+			total_to_verify++;
+		}
+	}
+
+	num_verified = 0;
+	*all_relays_online = 1;
+	memset(index_of_relays_used, 0, RELAY_POOL_MAX_SIZE);
+	seed_val = (((unsigned int)user_id[0]) ^ ((unsigned int)user_id[1]) ^ ((unsigned int)user_id[2]) ^ ((unsigned int)user_id[3]));
+	while(num_verified < total_to_verify) {
+		index = get_pseudo_random_number(seed_val);
+		seed_val ^= index;
+
+		index %= RELAY_POOL_MAX_SIZE;
+		if(ci_info->ri_pool[index].is_active == 1) {
+			if(index_of_relays_used[index] == 0) {
+				ret = verify_relay_online("[MAIN THREAD]", ci_info, index, &relay_is_online);
+				if(ret < 0) {
+					return -1;
+				}
+				if(relay_is_online == 0) {
+					*all_relays_online = 0;
+					return 0;
+				}
+
+				index_of_relays_used[index] = 1;
+				num_verified++;
+			}
+		}
+	}
+
+	#ifdef ENABLE_LOGGING
+		if(*all_relays_online) {
+			fprintf(stdout, "%s Found all relays are online\n", thread_id);
+		}
+	#endif
+
+	return 0;
+}
+
 static int verify_entry_relay_online(char *thread_id, conversation_info *ci_info, int *entry_relay_online)
 {
 	int ret, num_packets_in_send_queue;
@@ -1007,7 +1082,7 @@ static int verify_entry_relay_online(char *thread_id, conversation_info *ci_info
 	}
 	generate_payload_metadata_for_entry_relay(thread_id, client_ip_addr, &check_relay_payload);
 
-	initialize_relay_verification_command(&check_relay_payload);	
+	initialize_entry_relay_verification_command(&check_relay_payload);	
 
 	ret = send_packet(DUMMY_PACKET, ci_info, &r_info, &check_relay_payload, NULL);
 	if(ret < 0) {
@@ -1070,13 +1145,22 @@ static int verify_relay_online(char *thread_id, conversation_info *ci_info, int 
 	if(ret < 0) {
 		return -1;
 	}
-
+	ret = initialize_relay_verification_command(&check_relay_payload);
+	if(ret < 0) {
+		return -1;
+	}
+	ret = generate_return_onion_route_data_from_route_info(ci_info, &return_r_info, check_relay_payload.payload);
+	if(ret < 0) {
+		return -1;
+	}
+	ret = generate_return_onion_route_payload_from_route_info(ci_info, &return_r_info, check_relay_payload.payload);
+	if(ret < 0) {
+		return -1;
+	}
 	ret = generate_packet_metadata(ci_info, DUMMY_PACKET_W_RETURN_ROUTE, &return_r_info, &check_relay_payload);
 	if(ret < 0) {
 		return -1;
 	}
-
-	initialize_relay_verification_command(&check_relay_payload);
 
 	ret = send_packet(DUMMY_PACKET, ci_info, &r_info, &check_relay_payload, NULL);
 	if(ret < 0) {
@@ -1166,9 +1250,10 @@ int send_dummy_packet_with_return_route(conversation_info *ci_info)
 	}
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "[MAIN THREAD] Return route length = %u\n", return_r_info.route_length);
-		for (i = 0; i < return_r_info.route_length - 1; i++) {
+		for (i = 0; i < return_r_info.route_length; i++) {
 			fprintf(stdout, "[MAIN THREAD] Return route %u, index = %u, ip = %s\n", (i + 1), return_r_info.relay_route[i], ci_info->ri_pool[return_r_info.relay_route[i]].relay_ip);
 		}
+		fprintf(stdout, "[MAIN THREAD] Return route %u, index = none, ip = %s\n", (i + 1), client_ip_addr);
 	#endif
 	
 	ret = fill_buf_with_random_data((unsigned char *)&dummy_packet_payload, sizeof(dummy_packet_payload));
@@ -1567,6 +1652,7 @@ int generate_return_onion_route_data_from_route_info(conversation_info *ci_info,
 		return -1;
 	}
 
+	memcpy(encrypt_buffer, packet, PAYLOAD_SIZE_BYTES);
 	ret = fill_buf_with_random_data((unsigned char *)or_data, sizeof(or_data));
 	if(ret < 0) {
 		return -1;
@@ -1630,6 +1716,7 @@ int generate_return_onion_route_payload_from_route_info(conversation_info *ci_in
 		return -1;
 	}
 
+	memcpy(encrypt_buffer, packet, PAYLOAD_SIZE_BYTES);
 	ret = fill_buf_with_random_data((unsigned char *)or_data, sizeof(or_data));
 	if(ret < 0) {
 		return -1;
@@ -1820,6 +1907,29 @@ char* get_packet_type_str(packet_type type)
 	}
 
 	return "UNKNOWN";
+}
+
+static char get_send_packet_char(void)
+{
+	switch(curr_send_packet_char) {
+		case '-':
+			curr_send_packet_char = '\\';
+		break;
+		case '\\':
+			curr_send_packet_char = '|';
+		break;
+		case '|':
+			curr_send_packet_char = '/';
+		break;
+		case '/':
+			curr_send_packet_char = '-';
+		break;
+		default:
+			curr_send_packet_char = '-';
+		break;
+	}
+
+	return curr_send_packet_char;
 }
 
 void print_ret_code(char *thread_id, int ret)

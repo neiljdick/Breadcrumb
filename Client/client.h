@@ -154,6 +154,8 @@ static int initialize_relay_verification_command(payload_data *verification_payl
 static int wait_for_command_completion(int max_command_time, int *command_ret_status);
 static int verify_entry_relay_online(char *thread_id, conversation_info *ci_info, int *entry_relay_online);
 static int verify_relay_online(char *thread_id, conversation_info *ci_info, int relay_index, int *relay_is_online);
+static int verify_all_relays_online(char *thread_id, conversation_info *ci_info, int *all_relays_online);
+static char get_send_packet_char(void);
 
 int place_packet_on_send_queue(unsigned char *packet, char *destination_ip, int destination_port);
 int get_number_of_packets_in_send_queue(int *num_packets);
