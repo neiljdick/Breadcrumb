@@ -27,7 +27,7 @@
 char *program_name = "Client";
 
 #ifndef PORT_MAX
-	#define PORT_MAX 								(65533)
+	#define PORT_MAX 							(65533)
 #endif
 #define NUM_CERT_READ_ATTEMPTS 					(10)
 #define NUM_BIND_ATTEMPTS 						(5)
@@ -47,6 +47,7 @@ char *program_name = "Client";
 #define MAX_CONVERSATIONS						(32)
 #define RELAY_IP_MAX_LENGTH						(16)
 #define RELAY_ID_LEN 							((SHA256_DIGEST_LENGTH * 2) + 1)
+#define PATH_HISTORY_LENGTH						(10)
 
 #define MSG_PORT_PROTOCOL						("TCP")
 
@@ -68,12 +69,8 @@ typedef struct relay_indexer_info
 	RSA *public_cert;
 } relay_indexer_info;
 
-typedef struct relay_info
+typedef struct id_key_info
 {
-	int is_active;
-	unsigned int max_uid;
-	char relay_id[RELAY_ID_LEN];
-	char relay_ip[RELAY_IP_MAX_LENGTH];
 	unsigned char aes_key[AES_KEY_SIZE_BYTES];
 	unsigned int relay_user_id;
 	unsigned char payload_aes_key[AES_KEY_SIZE_BYTES];
@@ -82,6 +79,17 @@ typedef struct relay_info
 	unsigned int return_route_user_id;
 	unsigned char return_route_payload_aes_key[AES_KEY_SIZE_BYTES];
 	unsigned int return_route_payload_user_id;
+} id_key_info;
+
+typedef struct relay_info
+{
+	int is_active;
+	unsigned int max_uid;
+	char relay_id[RELAY_ID_LEN];
+	char relay_ip[RELAY_IP_MAX_LENGTH];
+	id_key_info current_key_info;
+	id_key_info key_info_history[PATH_HISTORY_LENGTH];
+	int kih_index;
 	RSA *public_cert;
 } relay_info;
 
@@ -100,6 +108,18 @@ typedef struct route_info
 	int relay_route[MAX_ROUTE_LENGTH];
 	int route_length;
 } route_info;
+
+typedef struct route_history_info
+{
+	int relay_route[MAX_ROUTE_LENGTH*2];
+	int route_length;
+} route_history_info;
+
+typedef struct route_history
+{
+	route_history_info history[PATH_HISTORY_LENGTH];
+	int rh_index;
+} route_history;
 
 typedef struct send_packet_node
 {
@@ -149,13 +169,19 @@ static void handle_pthread_ret(char *thread_id, int ret, int clientfd);
 static int init_send_packet_thread(pthread_t *send_packet_thread);
 static int init_receive_packet_thread(pthread_t *receive_packet_thread);
 static int init_listening_socket(char *thread_id, unsigned int port, int *listening_socket /* out */);
-static int init_networking(char *thread_id);
+static int init_self_ip(char *thread_id);
 static int initialize_relay_verification_command(payload_data *verification_payload);
 static int wait_for_command_completion(int max_command_time, int *command_ret_status);
 static int verify_entry_relay_online(char *thread_id, conversation_info *ci_info, int *entry_relay_online);
 static int verify_relay_online(char *thread_id, conversation_info *ci_info, int relay_index, int *relay_is_online);
 static int verify_all_relays_online(char *thread_id, conversation_info *ci_info, int *all_relays_online);
+static int get_relays_online(char *thread_id, conversation_info *ci_info, int *online_indexes, int online_indexes_len);
 static char get_send_packet_char(void);
+static int commit_current_key_info_to_history(relay_info *r_info);
+static int commit_key_info_to_history(conversation_info *ci_info);
+static int commit_route_info_to_history(packet_type type, conversation_info *info, route_info *r_info, route_info *return_r_info, void *arg);
+static int print_key_history(relay_info *r_info);
+static int print_route_info_history(void);
 
 int place_packet_on_send_queue(unsigned char *packet, char *destination_ip, int destination_port);
 int get_number_of_packets_in_send_queue(int *num_packets);

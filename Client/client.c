@@ -2,6 +2,7 @@
 
 #define ENABLE_LOGGING
 #define DEBUG_MODE
+//#define ENABLE_RECEIVE_PACKET_LOGGING
 //#define LAN_NETWORKING_MODE
 //#define PRINT_PACKETS
 //#define UID_CLASH_ENABLE
@@ -26,9 +27,11 @@ int index_of_active_conversation;
 conversation_info conversations[MAX_CONVERSATIONS];
 char friend_id[USER_NAME_MAX_LENGTH];
 char client_ip_addr[IP_BUF_MAX_LEN];
-
 int message_port, id_cache_port, cert_request_port;
 
+route_history rhistory;
+
+int init_convo_logging;
 char curr_send_packet_char = '-';
 
 void *send_packet_handler(void *);
@@ -49,7 +52,7 @@ int main(int argc, char const *argv[])
 		return -3;
 	}
 
-	ret = init_networking("[MAIN THREAD]");
+	ret = init_self_ip("[MAIN THREAD]");
 	if(ret < 0) {
 		return -4;
 	}
@@ -107,6 +110,8 @@ static int init_globals(int argc, char const *argv[])
 	memset(conversations, 0, sizeof(conversations));
 	memset(friend_id, 0, sizeof(friend_id));
 	memset(client_ip_addr, 0, sizeof(client_ip_addr));
+	memset(&rhistory, 0, sizeof(rhistory));
+	init_convo_logging = 0;
 	
 	get_friend_id(friend_id);
 
@@ -117,7 +122,7 @@ static int init_globals(int argc, char const *argv[])
 	return 0;
 }
 
-static int init_networking(char *thread_id)
+static int init_self_ip(char *thread_id)
 {
 	int ret;
 
@@ -196,7 +201,7 @@ void *receive_packet_handler(void *ptr)
 	socklen_t sockaddr_len;
 	char packet[packet_size_bytes];
 
-	#ifdef ENABLE_LOGGING
+	#ifdef ENABLE_RECEIVE_PACKET_LOGGING
 		fprintf(stdout, "[RECEIVE PACKET THREAD] Receive packet thread begin\n");
 	#endif
 
@@ -216,7 +221,7 @@ void *receive_packet_handler(void *ptr)
 
 			continue;
 		}
-		#ifdef ENABLE_LOGGING
+		#ifdef ENABLE_RECEIVE_PACKET_LOGGING
 			fprintf(stdout, "\r[RECEIVE PACKET THREAD] %s:%d received packet\n", inet_ntoa(relay_addr.sin_addr), ntohs(relay_addr.sin_port));
 		#endif
 
@@ -340,6 +345,7 @@ void *send_packet_handler(void *ptr)
 				fprintf(stdout, "\r%c", curr_send_packet_char);
 				fflush(stdout);
 			#endif
+			// TODO send dummy packet occasionally (in order to keep network bandwidth constant)
 		} else {
 			sem_wait(&sp_node_sem);
 
@@ -351,6 +357,10 @@ void *send_packet_handler(void *ptr)
 			}
 			#ifdef ENABLE_LOGGING
 				fprintf(stdout, "\r%c", get_send_packet_char());
+				fflush(stdout);
+			#endif
+			#ifndef ENABLE_LOGGING
+				fprintf(stdout, ".");
 				fflush(stdout);
 			#endif
 
@@ -454,6 +464,14 @@ int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 		return -1;
 	}
 
+	#ifndef ENABLE_LOGGING
+		fprintf(stdout, "Initializing conversation.");
+		fflush(stdout);
+	#endif
+
+	init_convo_logging = 1;
+	memset(ci_out, 0, sizeof(conversation_info));
+
 	#ifndef DEBUG_MODE
 
 		// Talk to conversation index server to initiate conversation
@@ -503,13 +521,20 @@ int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 	#ifdef ENABLE_LOGGING
 		print_conversation("[MAIN THREAD]", ci_out);
 	#endif
+	#ifndef ENABLE_LOGGING
+		fprintf(stdout, "done\nInitializing networking.");
+		fflush(stdout);
+	#endif
 
 	ret = perform_user_id_registration(ci_out);
 	if(ret < 0) {
 		return -1;
 	}
-
 	verify_all_relays_online("[MAIN THREAD]", ci_out, &all_relays_online);
+
+	#ifndef ENABLE_LOGGING
+		fprintf(stdout, "done\n");
+	#endif
 
 	return ret;
 }
@@ -656,6 +681,10 @@ int get_relay_public_certificates_debug(conversation_info *ci_info)
 		ci_info->ri_pool[i].public_cert = PEM_read_RSAPublicKey(fp_public_key, NULL, NULL, NULL);
 		fclose(fp_public_key);		
 	}
+	#ifndef ENABLE_LOGGING
+		fprintf(stdout, ".");
+		fflush(stdout);
+	#endif
 	
 	return 0;
 }
@@ -704,6 +733,10 @@ int set_entry_relay_for_conversation(conversation_info *ci_info)
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "[MAIN THREAD] Set first relay = %s\n", ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip);
 	#endif
+	#ifndef ENABLE_LOGGING
+		fprintf(stdout, ".");
+		fflush(stdout);
+	#endif
 
 	return 0;
 }
@@ -718,24 +751,28 @@ int set_relay_keys_for_conversation(conversation_info *ci_info)
 
 	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
 		if(ci_info->ri_pool[i].is_active) {
-			ret = generate_AES_key(ci_info->ri_pool[i].aes_key, AES_KEY_SIZE_BYTES);
+			ret = generate_AES_key(ci_info->ri_pool[i].current_key_info.aes_key, AES_KEY_SIZE_BYTES);
 			if(ret < 0) {
 				return -1;
 			}
-			ret = generate_AES_key(ci_info->ri_pool[i].payload_aes_key, AES_KEY_SIZE_BYTES);
+			ret = generate_AES_key(ci_info->ri_pool[i].current_key_info.payload_aes_key, AES_KEY_SIZE_BYTES);
 			if(ret < 0) {
 				return -1;
 			}
-			ret = generate_AES_key(ci_info->ri_pool[i].return_route_aes_key, AES_KEY_SIZE_BYTES);
+			ret = generate_AES_key(ci_info->ri_pool[i].current_key_info.return_route_aes_key, AES_KEY_SIZE_BYTES);
 			if(ret < 0) {
 				return -1;
 			}
-			ret = generate_AES_key(ci_info->ri_pool[i].return_route_payload_aes_key, AES_KEY_SIZE_BYTES);
+			ret = generate_AES_key(ci_info->ri_pool[i].current_key_info.return_route_payload_aes_key, AES_KEY_SIZE_BYTES);
 			if(ret < 0) {
 				return -1;
 			}
 		}
 	}
+	#ifndef ENABLE_LOGGING
+		fprintf(stdout, ".");
+		fflush(stdout);
+	#endif
 
 	return 0;
 }
@@ -750,12 +787,16 @@ int set_user_ids_for_conversation(conversation_info *ci_info)
 
 	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
 		if(ci_info->ri_pool[i].is_active) {
-			generate_new_user_id(ci_info, i, &(ci_info->ri_pool[i].relay_user_id));
-			generate_new_user_id(ci_info, i, &(ci_info->ri_pool[i].payload_relay_user_id));
-			generate_new_user_id(ci_info, i, &(ci_info->ri_pool[i].return_route_user_id));
-			generate_new_user_id(ci_info, i, &(ci_info->ri_pool[i].return_route_payload_user_id));
+			generate_new_user_id(ci_info, i, &(ci_info->ri_pool[i].current_key_info.relay_user_id));
+			generate_new_user_id(ci_info, i, &(ci_info->ri_pool[i].current_key_info.payload_relay_user_id));
+			generate_new_user_id(ci_info, i, &(ci_info->ri_pool[i].current_key_info.return_route_user_id));
+			generate_new_user_id(ci_info, i, &(ci_info->ri_pool[i].current_key_info.return_route_payload_user_id));
 		}
 	}
+	#ifndef ENABLE_LOGGING
+		fprintf(stdout, ".");
+		fflush(stdout);
+	#endif
 
 	return 0;
 }
@@ -806,6 +847,8 @@ int perform_user_id_registration(conversation_info *ci_info)
 		return -1;
 	}
 
+	commit_key_info_to_history(ci_info);
+	commit_route_info_to_history(REGISTER_UIDS_WITH_ENTRY_RELAY, ci_info, NULL, NULL, NULL);	
 	ret = send_packet(REGISTER_UIDS_WITH_ENTRY_RELAY, ci_info, NULL, NULL, NULL);
 	if(ret < 0) {
 		return -1;				
@@ -826,6 +869,8 @@ int perform_user_id_registration(conversation_info *ci_info)
 		relay_register_index %= RELAY_POOL_MAX_SIZE;
 		if((ci_info->ri_pool[relay_register_index].is_active == 1) && (relay_register_index != ci_info->index_of_entry_relay)) {
 			if(index_of_relays_registered[relay_register_index] == 0) {
+				commit_key_info_to_history(ci_info);
+				commit_route_info_to_history(REGISTER_UIDS_WITH_RELAY, ci_info, NULL, NULL, &relay_register_index);
 				ret = send_packet(REGISTER_UIDS_WITH_RELAY, ci_info, NULL,  NULL, &relay_register_index);
 				if(ret < 0) {
 					return -1;
@@ -1006,27 +1051,61 @@ static int wait_for_command_completion(int max_command_time, int *command_ret_st
 
 static int verify_all_relays_online(char *thread_id, conversation_info *ci_info, int *all_relays_online)
 {
-	int i, ret, relay_is_online;
-	unsigned int num_verified, total_to_verify;
-	unsigned int seed_val, index;
-	char index_of_relays_used[RELAY_POOL_MAX_SIZE];
+	int i, ret;
+	int online_indexes[RELAY_POOL_MAX_SIZE];
 
-	if(ci_info == NULL) {
+	if((ci_info == NULL) || (all_relays_online == NULL)) {
 		return -1;
 	}
 
-	total_to_verify = 0;
-	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
-		if(ci_info->ri_pool[i].is_active == 1) {
-			total_to_verify++;
-		}
+	ret = get_relays_online(thread_id, ci_info, online_indexes, RELAY_POOL_MAX_SIZE);
+	if(ret < 0) {
+		return -1;
 	}
 
-	num_verified = 0;
 	*all_relays_online = 1;
+	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
+		if((ci_info->ri_pool[i].is_active == 1) && (online_indexes[i] == 0)){
+			*all_relays_online = 0;
+		}
+	}	
+
+	#ifdef ENABLE_LOGGING
+		if(*all_relays_online) {
+			fprintf(stdout, "%s Found all relays are online\n", thread_id);
+		} else {
+			fprintf(stdout, "%s Found offline relays\n", thread_id);
+		}
+	#endif
+
+	return 0;
+}
+
+static int get_relays_online(char *thread_id, conversation_info *ci_info, int *online_indexes, int online_indexes_len)
+{
+	int i, ret, relay_is_online;
+	unsigned int seed_val, index;
+	int num_checked, num_to_check;
+	char index_of_relays_used[RELAY_POOL_MAX_SIZE];
+
+	if((ci_info == NULL) || (online_indexes == NULL)) {
+		return -1;
+	}
+	if(online_indexes_len < RELAY_POOL_MAX_SIZE) {
+		return -1;
+	}
+
 	memset(index_of_relays_used, 0, RELAY_POOL_MAX_SIZE);
+	memset(online_indexes, 0, RELAY_POOL_MAX_SIZE);
+
+	num_to_check = num_checked = 0;
+	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
+		if(ci_info->ri_pool[i].is_active == 1) {
+			num_to_check++;
+		}
+	}
 	seed_val = (((unsigned int)user_id[0]) ^ ((unsigned int)user_id[1]) ^ ((unsigned int)user_id[2]) ^ ((unsigned int)user_id[3]));
-	while(num_verified < total_to_verify) {
+	while(num_checked < num_to_check) {
 		index = get_pseudo_random_number(seed_val);
 		seed_val ^= index;
 
@@ -1037,22 +1116,14 @@ static int verify_all_relays_online(char *thread_id, conversation_info *ci_info,
 				if(ret < 0) {
 					return -1;
 				}
-				if(relay_is_online == 0) {
-					*all_relays_online = 0;
-					return 0;
+				if(relay_is_online) {
+					online_indexes[index] = 1;
 				}
-
 				index_of_relays_used[index] = 1;
-				num_verified++;
+				num_checked++;
 			}
 		}
 	}
-
-	#ifdef ENABLE_LOGGING
-		if(*all_relays_online) {
-			fprintf(stdout, "%s Found all relays are online\n", thread_id);
-		}
-	#endif
 
 	return 0;
 }
@@ -1075,6 +1146,9 @@ static int verify_entry_relay_online(char *thread_id, conversation_info *ci_info
 
 	r_info.route_length = 1;
 	r_info.relay_route[0] = ci_info->index_of_entry_relay;
+
+	commit_key_info_to_history(ci_info);
+	commit_route_info_to_history(DUMMY_PACKET, ci_info, &r_info, NULL, NULL);
 
 	ret = fill_buf_with_random_data((unsigned char *)&check_relay_payload, sizeof(check_relay_payload));
 	if(ret < 0) {
@@ -1141,6 +1215,9 @@ static int verify_relay_online(char *thread_id, conversation_info *ci_info, int 
 	return_r_info.route_length = 1;
 	return_r_info.relay_route[0] = ci_info->index_of_entry_relay;
 
+	commit_key_info_to_history(ci_info);
+	commit_route_info_to_history(DUMMY_PACKET, ci_info, &r_info, &return_r_info, NULL);
+
 	ret = fill_buf_with_random_data((unsigned char *)&check_relay_payload, sizeof(check_relay_payload));
 	if(ret < 0) {
 		return -1;
@@ -1205,6 +1282,9 @@ int send_dummy_packet_no_return_route(conversation_info *ci_info)
 		}
 	#endif
 
+	commit_key_info_to_history(ci_info);
+	commit_route_info_to_history(DUMMY_PACKET, ci_info, &r_info, NULL, NULL);
+
 	ret = fill_buf_with_random_data((unsigned char *)&dummy_packet_payload, sizeof(dummy_packet_payload));
 	if(ret < 0) {
 		return -1;
@@ -1255,6 +1335,9 @@ int send_dummy_packet_with_return_route(conversation_info *ci_info)
 		}
 		fprintf(stdout, "[MAIN THREAD] Return route %u, index = none, ip = %s\n", (i + 1), client_ip_addr);
 	#endif
+
+	commit_key_info_to_history(ci_info);
+	commit_route_info_to_history(DUMMY_PACKET, ci_info, &r_info, &return_r_info, NULL);
 	
 	ret = fill_buf_with_random_data((unsigned char *)&dummy_packet_payload, sizeof(dummy_packet_payload));
 	if(ret < 0) {
@@ -1335,14 +1418,6 @@ int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info
 
 		return -1;
 	}
-	#ifdef PRINT_PACKETS
-		int i;
-		fprintf(stdout, "\n ------------------------------------------------------------ \n\n");
-		for (i = 0; i < packet_size_bytes; i++) {
-			fprintf(stdout, "%02x", packet_buf[i]);
-		}
-		fprintf(stdout, "\n\n ------------------------------------------------------------ \n");
-	#endif
 
 	ret = place_packet_on_send_queue(packet_buf, destination_ip, destination_port);
 	if(ret < 0) {
@@ -1380,14 +1455,14 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 			memcpy(destination_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, RELAY_IP_MAX_LENGTH);
 			*destination_port = id_cache_port;
 
-			memcpy(ic_data.aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].aes_key, AES_KEY_SIZE_BYTES);
-			ic_data.relay_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].relay_user_id;	
-			memcpy(ic_data.payload_aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].payload_aes_key, AES_KEY_SIZE_BYTES);
-			ic_data.payload_relay_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].payload_relay_user_id;
-			memcpy(ic_data.return_route_aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].return_route_aes_key, AES_KEY_SIZE_BYTES);
-			ic_data.return_route_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].return_route_user_id;
-			memcpy(ic_data.return_route_payload_aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].return_route_payload_aes_key, AES_KEY_SIZE_BYTES);
-			ic_data.return_route_payload_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].return_route_payload_user_id;
+			memcpy(ic_data.aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.relay_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.relay_user_id;	
+			memcpy(ic_data.payload_aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.payload_aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.payload_relay_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.payload_relay_user_id;
+			memcpy(ic_data.return_route_aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.return_route_aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.return_route_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.return_route_user_id;
+			memcpy(ic_data.return_route_payload_aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.return_route_payload_aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.return_route_payload_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.return_route_payload_user_id;
 			
 			ret = RSA_public_encrypt(sizeof(id_cache_data), (unsigned char *)&ic_data, (packet + payload_start_byte), ci_info->ri_pool[ci_info->index_of_entry_relay].public_cert, RSA_PKCS1_OAEP_PADDING);
 			if(ret != RSA_KEY_LENGTH_BYTES) {
@@ -1421,7 +1496,7 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 			*destination_port = message_port;
 
 			generate_AES_key((unsigned char *)or_data[0].iv, AES_KEY_SIZE_BYTES);
-			or_data[0].uid = ci_info->ri_pool[ci_info->index_of_entry_relay].relay_user_id;
+			or_data[0].uid = ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.relay_user_id;
 			generate_new_user_id(ci_info, ci_info->index_of_entry_relay, &(or_data[0].ord_enc.new_uid));
 			generate_AES_key((unsigned char *)or_data[0].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 			inet_aton(ci_info->ri_pool[relay_register_index].relay_ip, (struct in_addr *)&(or_data[0].ord_enc.next_pkg_ip));
@@ -1431,14 +1506,14 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 			get_ord_packet_checksum(&(or_data[0].ord_enc), &(or_data[0].ord_enc.ord_checksum));
 
 			ret = aes_encrypt_block("[MAIN THREAD]", (unsigned char *)&(or_data[0].ord_enc), sizeof(onion_route_data_encrypted), 
-										ci_info->ri_pool[ci_info->index_of_entry_relay].aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[0].iv), (packet + cipher_text_byte_offset));
+										ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[0].iv), (packet + cipher_text_byte_offset));
 			if(ret < 0) {
 				return -1;
 			}
 			memcpy(packet, &(or_data[0]), cipher_text_byte_offset);
 
 			generate_AES_key((unsigned char *)or_payload_data[0].iv, AES_KEY_SIZE_BYTES);
-			or_payload_data[0].uid = ci_info->ri_pool[ci_info->index_of_entry_relay].payload_relay_user_id;
+			or_payload_data[0].uid = ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.payload_relay_user_id;
 			generate_new_user_id(ci_info, ci_info->index_of_entry_relay, &(or_payload_data[0].ord_enc.new_uid));
 			generate_AES_key((unsigned char *)or_payload_data[0].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 
@@ -1446,14 +1521,14 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 			get_ord_packet_checksum(&(or_payload_data[0].ord_enc), &(or_payload_data[0].ord_enc.ord_checksum));
 
 			memcpy(encrypt_buffer, &(or_payload_data[0]), sizeof(onion_route_data));
-			memcpy(ic_data.aes_key, ci_info->ri_pool[relay_register_index].aes_key, AES_KEY_SIZE_BYTES);
-			ic_data.relay_user_id = ci_info->ri_pool[relay_register_index].relay_user_id;	
-			memcpy(ic_data.payload_aes_key, ci_info->ri_pool[relay_register_index].payload_aes_key, AES_KEY_SIZE_BYTES);
-			ic_data.payload_relay_user_id = ci_info->ri_pool[relay_register_index].payload_relay_user_id;
-			memcpy(ic_data.return_route_aes_key, ci_info->ri_pool[relay_register_index].return_route_aes_key, AES_KEY_SIZE_BYTES);
-			ic_data.return_route_user_id = ci_info->ri_pool[relay_register_index].return_route_user_id;
-			memcpy(ic_data.return_route_payload_aes_key, ci_info->ri_pool[relay_register_index].return_route_payload_aes_key, AES_KEY_SIZE_BYTES);
-			ic_data.return_route_payload_user_id = ci_info->ri_pool[relay_register_index].return_route_payload_user_id;
+			memcpy(ic_data.aes_key, ci_info->ri_pool[relay_register_index].current_key_info.aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.relay_user_id = ci_info->ri_pool[relay_register_index].current_key_info.relay_user_id;	
+			memcpy(ic_data.payload_aes_key, ci_info->ri_pool[relay_register_index].current_key_info.payload_aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.payload_relay_user_id = ci_info->ri_pool[relay_register_index].current_key_info.payload_relay_user_id;
+			memcpy(ic_data.return_route_aes_key, ci_info->ri_pool[relay_register_index].current_key_info.return_route_aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.return_route_user_id = ci_info->ri_pool[relay_register_index].current_key_info.return_route_user_id;
+			memcpy(ic_data.return_route_payload_aes_key, ci_info->ri_pool[relay_register_index].current_key_info.return_route_payload_aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.return_route_payload_user_id = ci_info->ri_pool[relay_register_index].current_key_info.return_route_payload_user_id;
 			
 			ret = RSA_public_encrypt(sizeof(id_cache_data), (unsigned char *)&ic_data, (encrypt_buffer + (sizeof(onion_route_data))), 
 										ci_info->ri_pool[relay_register_index].public_cert, RSA_PKCS1_OAEP_PADDING);
@@ -1467,16 +1542,16 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 
 			memcpy((packet + payload_start_byte), &or_payload_data[0], cipher_text_byte_offset);
 			ret = aes_encrypt_block("[MAIN THREAD]", encrypt_buffer + cipher_text_byte_offset, (sizeof(onion_route_data_encrypted) + RSA_KEY_LENGTH_BYTES), 
-										ci_info->ri_pool[ci_info->index_of_entry_relay].payload_aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_payload_data[0].iv), 
+										ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.payload_aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_payload_data[0].iv), 
 											(packet + payload_start_byte + cipher_text_byte_offset));
 			if(ret < 0) {
 				return -1;
 			}
 
-			ci_info->ri_pool[ci_info->index_of_entry_relay].relay_user_id = or_data[0].ord_enc.new_uid;
-			memcpy(ci_info->ri_pool[ci_info->index_of_entry_relay].aes_key, or_data[0].ord_enc.new_key, AES_KEY_SIZE_BYTES);
-			ci_info->ri_pool[ci_info->index_of_entry_relay].payload_relay_user_id = or_payload_data[0].ord_enc.new_uid;
-			memcpy(ci_info->ri_pool[ci_info->index_of_entry_relay].payload_aes_key, or_payload_data[0].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+			ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.relay_user_id = or_data[0].ord_enc.new_uid;
+			memcpy(ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.aes_key, or_data[0].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+			ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.payload_relay_user_id = or_payload_data[0].ord_enc.new_uid;
+			memcpy(ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.payload_aes_key, or_payload_data[0].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 
 			#ifdef ENABLE_LOGGING
 				fprintf(stdout, "[MAIN THREAD] %s with relay = %s, via relay = %s, Relay UID = %u, Payload UID = %u\n", 
@@ -1546,7 +1621,7 @@ int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_
 		}
 
 		generate_AES_key((unsigned char *)or_data[i].iv, AES_KEY_SIZE_BYTES);
-		or_data[i].uid = ci_info->ri_pool[route_index].relay_user_id;
+		or_data[i].uid = ci_info->ri_pool[route_index].current_key_info.relay_user_id;
 		generate_new_user_id(ci_info, route_index, &(or_data[i].ord_enc.new_uid));
 		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 		or_data[i].ord_enc.next_pkg_port = message_port;
@@ -1562,12 +1637,12 @@ int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_
 		memcpy((packet + or_offset), &(or_data[i]), cipher_text_byte_offset);
 		memcpy((encrypt_buffer + or_offset), &(or_data[i]), sizeof(onion_route_data));
 		ret = aes_encrypt_block("[MAIN THREAD]", (encrypt_buffer + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset), 
-									ci_info->ri_pool[route_index].aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[i].iv), (packet + or_offset + cipher_text_byte_offset));
+									ci_info->ri_pool[route_index].current_key_info.aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[i].iv), (packet + or_offset + cipher_text_byte_offset));
 		if(ret < 0) {
 			return -1;
 		}
-		ci_info->ri_pool[route_index].relay_user_id = or_data[i].ord_enc.new_uid;
-		memcpy(ci_info->ri_pool[route_index].aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		ci_info->ri_pool[route_index].current_key_info.relay_user_id = or_data[i].ord_enc.new_uid;
+		memcpy(ci_info->ri_pool[route_index].current_key_info.aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 		memcpy((encrypt_buffer + or_offset + cipher_text_byte_offset), (packet + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset));
 
 		previous_route_index = route_index;
@@ -1613,7 +1688,7 @@ int generate_onion_route_payload_from_route_info(conversation_info *ci_info, rou
 		}
 
 		generate_AES_key((unsigned char *)or_data[i].iv, AES_KEY_SIZE_BYTES);
-		or_data[i].uid = ci_info->ri_pool[route_index].payload_relay_user_id;
+		or_data[i].uid = ci_info->ri_pool[route_index].current_key_info.payload_relay_user_id;
 		generate_new_user_id(ci_info, route_index, &(or_data[i].ord_enc.new_uid));
 		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 
@@ -1623,12 +1698,12 @@ int generate_onion_route_payload_from_route_info(conversation_info *ci_info, rou
 		memcpy((packet + or_offset), &(or_data[i]), cipher_text_byte_offset);
 		memcpy((encrypt_buffer + or_offset), &(or_data[i]), sizeof(onion_route_data));
 		ret = aes_encrypt_block("[MAIN THREAD]", (encrypt_buffer + or_offset + cipher_text_byte_offset), (packet_size_bytes - or_offset - cipher_text_byte_offset), 
-									ci_info->ri_pool[route_index].payload_aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[i].iv), (packet + or_offset + cipher_text_byte_offset));
+									ci_info->ri_pool[route_index].current_key_info.payload_aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[i].iv), (packet + or_offset + cipher_text_byte_offset));
 		if(ret < 0) {
 			return -1;
 		}
-		ci_info->ri_pool[route_index].payload_relay_user_id = or_data[i].ord_enc.new_uid;
-		memcpy(ci_info->ri_pool[route_index].payload_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		ci_info->ri_pool[route_index].current_key_info.payload_relay_user_id = or_data[i].ord_enc.new_uid;
+		memcpy(ci_info->ri_pool[route_index].current_key_info.payload_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 		memcpy((encrypt_buffer + or_offset + cipher_text_byte_offset), (packet + or_offset + cipher_text_byte_offset), (packet_size_bytes - or_offset - cipher_text_byte_offset));
 
 		or_offset -= sizeof(onion_route_data);
@@ -1670,7 +1745,7 @@ int generate_return_onion_route_data_from_route_info(conversation_info *ci_info,
 		}
 
 		generate_AES_key((unsigned char *)or_data[i].iv, AES_KEY_SIZE_BYTES);
-		or_data[i].uid = ci_info->ri_pool[route_index].return_route_user_id;
+		or_data[i].uid = ci_info->ri_pool[route_index].current_key_info.return_route_user_id;
 		generate_new_user_id(ci_info, route_index, &(or_data[i].ord_enc.new_uid));
 		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 		or_data[i].ord_enc.next_pkg_port = message_port;
@@ -1686,12 +1761,12 @@ int generate_return_onion_route_data_from_route_info(conversation_info *ci_info,
 		memcpy((packet + or_offset), &(or_data[i]), cipher_text_byte_offset);
 		memcpy((encrypt_buffer + or_offset), &(or_data[i]), sizeof(onion_route_data));
 		ret = aes_encrypt_block("[MAIN THREAD]", (encrypt_buffer + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset), 
-									ci_info->ri_pool[route_index].return_route_aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[i].iv), (packet + or_offset + cipher_text_byte_offset));
+									ci_info->ri_pool[route_index].current_key_info.return_route_aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[i].iv), (packet + or_offset + cipher_text_byte_offset));
 		if(ret < 0) {
 			return -1;
 		}
-		ci_info->ri_pool[route_index].return_route_user_id = or_data[i].ord_enc.new_uid;
-		memcpy(ci_info->ri_pool[route_index].return_route_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		ci_info->ri_pool[route_index].current_key_info.return_route_user_id = or_data[i].ord_enc.new_uid;
+		memcpy(ci_info->ri_pool[route_index].current_key_info.return_route_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 		memcpy((encrypt_buffer + or_offset + cipher_text_byte_offset), (packet + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset));
 
 		previous_route_index = route_index;
@@ -1733,7 +1808,7 @@ int generate_return_onion_route_payload_from_route_info(conversation_info *ci_in
 		}
 
 		generate_AES_key((unsigned char *)or_data[i].iv, AES_KEY_SIZE_BYTES);
-		or_data[i].uid = ci_info->ri_pool[route_index].return_route_payload_user_id;
+		or_data[i].uid = ci_info->ri_pool[route_index].current_key_info.return_route_payload_user_id;
 		generate_new_user_id(ci_info, route_index, &(or_data[i].ord_enc.new_uid));
 		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 		or_data[i].ord_enc.next_pkg_port = message_port;
@@ -1744,13 +1819,13 @@ int generate_return_onion_route_payload_from_route_info(conversation_info *ci_in
 		memcpy((packet + payload_start_byte + or_offset), &(or_data[i]), cipher_text_byte_offset);
 		memcpy((encrypt_buffer + or_offset), &(or_data[i]), sizeof(onion_route_data));
 		ret = aes_encrypt_block("[MAIN THREAD]", (encrypt_buffer + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset), 
-									ci_info->ri_pool[route_index].return_route_payload_aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[i].iv), 
+									ci_info->ri_pool[route_index].current_key_info.return_route_payload_aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[i].iv), 
 										(packet + payload_start_byte + or_offset + cipher_text_byte_offset));
 		if(ret < 0) {
 			return -1;
 		}
-		ci_info->ri_pool[route_index].return_route_payload_user_id = or_data[i].ord_enc.new_uid;
-		memcpy(ci_info->ri_pool[route_index].return_route_payload_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		ci_info->ri_pool[route_index].current_key_info.return_route_payload_user_id = or_data[i].ord_enc.new_uid;
+		memcpy(ci_info->ri_pool[route_index].current_key_info.return_route_payload_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 		memcpy((encrypt_buffer + or_offset + cipher_text_byte_offset), (packet + payload_start_byte + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset));
 
 		or_offset -= sizeof(onion_route_data);
@@ -1758,7 +1833,6 @@ int generate_return_onion_route_payload_from_route_info(conversation_info *ci_in
 
 	return 0;
 }
-
 
 int place_packet_on_send_queue(unsigned char *packet, char *destination_ip, int destination_port)
 {
@@ -1793,6 +1867,168 @@ int place_packet_on_send_queue(unsigned char *packet, char *destination_ip, int 
 	}
 
 	sem_post(&sp_node_sem);
+
+	return 0;
+}
+
+static int commit_current_key_info_to_history(relay_info *r_info)
+{
+	if(r_info == NULL) {
+		return -1;
+	}
+
+	if(r_info->kih_index >= PATH_HISTORY_LENGTH) {
+		r_info->kih_index = 0;
+	}
+	memcpy((r_info->key_info_history + r_info->kih_index), &(r_info->current_key_info), sizeof(id_key_info));
+	++(r_info->kih_index);
+
+	return 0;
+}
+
+static int commit_key_info_to_history(conversation_info *ci_info)
+{
+	int i;
+
+	if(ci_info == NULL) {
+		return -1;
+	}
+
+	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
+		if(ci_info->ri_pool[i].is_active == 1) {
+			commit_current_key_info_to_history(&(ci_info->ri_pool[i]));
+		}
+	}
+	
+	return 0;
+}
+
+static int print_key_history(relay_info *r_info)
+{
+	int curr_hist_index, hist_index;
+	int i;
+	char buf[(AES_KEY_SIZE_BYTES*2)];
+
+	if(r_info == NULL) {
+		return -1;
+	}
+
+	curr_hist_index = (r_info->kih_index + 1);
+	if (curr_hist_index >= PATH_HISTORY_LENGTH) {
+		curr_hist_index = 0;
+	}
+
+	hist_index = 0;
+	while(curr_hist_index != r_info->kih_index) {
+		if(r_info->key_info_history[curr_hist_index].relay_user_id != 0) {
+			fprintf(stdout, "Key History %d:\n", hist_index);
+			for (i = 0; i < AES_KEY_SIZE_BYTES; i++) {
+				sprintf((buf + (i*2)), "%02x", 0xff & r_info->key_info_history[curr_hist_index].aes_key[i]);
+			}
+			fprintf(stdout, "\tRelay Key = %s\n", buf);
+			fprintf(stdout, "\tRelay User ID = %d\n", r_info->key_info_history[curr_hist_index].relay_user_id);
+
+			hist_index++;
+		}
+
+		curr_hist_index++;
+		if (curr_hist_index >= PATH_HISTORY_LENGTH) {
+			curr_hist_index = 0;
+		}
+	}
+
+	fprintf(stdout, "-----------------------------------------\n");
+
+	return 0;
+}
+
+static int commit_route_info_to_history(packet_type type, conversation_info *c_info, route_info *r_info, route_info *return_r_info, void *arg)
+{
+	int i, j;
+
+	if(c_info == NULL) {
+		return -1;
+	}
+
+	switch(type) {
+		case REGISTER_UIDS_WITH_ENTRY_RELAY:
+			if(rhistory.rh_index >= PATH_HISTORY_LENGTH) {
+				rhistory.rh_index = 0;
+			}
+			rhistory.history[rhistory.rh_index].relay_route[0] = c_info->index_of_entry_relay;
+			rhistory.history[rhistory.rh_index].route_length = 1;
+			rhistory.rh_index++;			
+		break;
+		case REGISTER_UIDS_WITH_RELAY:
+			if (arg == NULL) {
+				return -1;
+			}
+			if(rhistory.rh_index >= PATH_HISTORY_LENGTH) {
+				rhistory.rh_index = 0;
+			}
+			rhistory.history[rhistory.rh_index].relay_route[0] = c_info->index_of_entry_relay;
+			rhistory.history[rhistory.rh_index].relay_route[1] = *((int *)arg);
+			rhistory.history[rhistory.rh_index].route_length = 2;
+			rhistory.rh_index++;
+		break;
+		case DUMMY_PACKET:
+			if(r_info == NULL) {
+				return -1;
+			}
+			if(rhistory.rh_index >= PATH_HISTORY_LENGTH) {
+				rhistory.rh_index = 0;
+			}
+			j = 0;
+			for(i = 0; i < r_info->route_length; ++i) {
+				if(i >= MAX_ROUTE_LENGTH) {
+					return -1;
+				}
+				rhistory.history[rhistory.rh_index].relay_route[j++] = r_info->relay_route[i];
+			}
+			if(return_r_info != NULL) {
+				for(i = 0; i < return_r_info->route_length; ++i) {
+					if(i >= MAX_ROUTE_LENGTH) {
+						return -1;
+					}
+					rhistory.history[rhistory.rh_index].relay_route[j++] = return_r_info->relay_route[i];
+				}	
+			}
+			rhistory.history[rhistory.rh_index].route_length = j;
+			rhistory.rh_index++;
+		break;
+	}
+
+	return 0;
+}
+
+static int print_route_info_history(void)
+{
+	int i;
+	int hist_index, print_index;
+
+	hist_index = rhistory.rh_index + 1;
+	if(hist_index >= PATH_HISTORY_LENGTH) {
+		hist_index = 0;
+	}
+
+	print_index = 0;
+	while(hist_index != rhistory.rh_index) {
+		if(rhistory.history[hist_index].route_length != 0) {
+			fprintf(stdout, "Path history %d:", print_index++);
+			for(i = 0; i < rhistory.history[hist_index].route_length; ++i) {
+				if(i >= (MAX_ROUTE_LENGTH*2)) {
+					return -1;
+				}
+				fprintf(stdout, " %d ", rhistory.history[hist_index].relay_route[i]);
+			}
+			fprintf(stdout, "\n");
+		}
+
+		hist_index++;
+		if(hist_index >= PATH_HISTORY_LENGTH) {
+			hist_index = 0;
+		}		
+	}
 
 	return 0;
 }
@@ -1866,28 +2102,28 @@ int print_conversation(char *thread_id, conversation_info *ci_info)
 			fprintf(stdout, "%s Relay IP = %s\n", thread_id, ci_info->ri_pool[i].relay_ip);
 			
 			for (j = 0; j < AES_KEY_SIZE_BYTES; j++) {
-				sprintf((buf + (j*2)), "%02x", 0xff & ci_info->ri_pool[i].aes_key[j]);
+				sprintf((buf + (j*2)), "%02x", 0xff & ci_info->ri_pool[i].current_key_info.aes_key[j]);
 			}
 			fprintf(stdout, "%s Relay Key = %s\n", thread_id, buf);
-			fprintf(stdout, "%s Relay User ID = %u\n", thread_id, ci_info->ri_pool[i].relay_user_id);
+			fprintf(stdout, "%s Relay User ID = %u\n", thread_id, ci_info->ri_pool[i].current_key_info.relay_user_id);
 
 			for (j = 0; j < AES_KEY_SIZE_BYTES; j++) {
-				sprintf((buf + (j*2)), "%02x", 0xff & ci_info->ri_pool[i].payload_aes_key[j]);
+				sprintf((buf + (j*2)), "%02x", 0xff & ci_info->ri_pool[i].current_key_info.payload_aes_key[j]);
 			}
 			fprintf(stdout, "%s Payload Relay Key = %s\n", thread_id, buf);
-			fprintf(stdout, "%s Payload Relay User ID = %u\n", thread_id, ci_info->ri_pool[i].payload_relay_user_id);
+			fprintf(stdout, "%s Payload Relay User ID = %u\n", thread_id, ci_info->ri_pool[i].current_key_info.payload_relay_user_id);
 
 			for (j = 0; j < AES_KEY_SIZE_BYTES; j++) {
-				sprintf((buf + (j*2)), "%02x", 0xff & ci_info->ri_pool[i].return_route_aes_key[j]);
+				sprintf((buf + (j*2)), "%02x", 0xff & ci_info->ri_pool[i].current_key_info.return_route_aes_key[j]);
 			}
 			fprintf(stdout, "%s Return Route Relay Key = %s\n", thread_id, buf);
-			fprintf(stdout, "%s Return Route Relay User ID = %u\n", thread_id, ci_info->ri_pool[i].return_route_user_id);
+			fprintf(stdout, "%s Return Route Relay User ID = %u\n", thread_id, ci_info->ri_pool[i].current_key_info.return_route_user_id);
 
 			for (j = 0; j < AES_KEY_SIZE_BYTES; j++) {
-				sprintf((buf + (j*2)), "%02x", 0xff & ci_info->ri_pool[i].return_route_payload_aes_key[j]);
+				sprintf((buf + (j*2)), "%02x", 0xff & ci_info->ri_pool[i].current_key_info.return_route_payload_aes_key[j]);
 			}
 			fprintf(stdout, "%s Return Route Relay Key = %s\n", thread_id, buf);
-			fprintf(stdout, "%s Return Route Relay User ID = %u\n", thread_id, ci_info->ri_pool[i].return_route_payload_user_id);
+			fprintf(stdout, "%s Return Route Relay User ID = %u\n", thread_id, ci_info->ri_pool[i].current_key_info.return_route_payload_user_id);
 		}
 	}
 	fprintf(stdout, "%s ------------------------------------\n", thread_id);
