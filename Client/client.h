@@ -48,12 +48,13 @@ char *program_name = "Client";
 #define RELAY_IP_MAX_LENGTH						(16)
 #define RELAY_ID_LEN 							((SHA256_DIGEST_LENGTH * 2) + 1)
 #define PATH_HISTORY_LENGTH						(10)
+#define MAX_UID_HISTORY_RECONNECT_ATTEMPTS 		(2)
 
 #define MSG_PORT_PROTOCOL						("TCP")
 
 #define THREAD_COMMAND_DATA_SIZE 				(512)
 #define THREAD_RETURN_PACKET_CONFIRM_SIZE		(64)
-#define MAX_CHECK_NODE_TIME_SEC					(10)
+#define MAX_CHECK_NODE_TIME_SEC					(3)
 
 const char *public_cert_dir = ".relay_certs";
 
@@ -62,6 +63,11 @@ typedef enum {
 	REGISTER_UIDS_WITH_RELAY,
 	DUMMY_PACKET
 } packet_type;
+
+typedef enum {
+	DISABLE_HISTORY = 0,
+	ENABLE_HISTORY
+} history_type;
 
 typedef struct relay_indexer_info
 {
@@ -84,6 +90,7 @@ typedef struct id_key_info
 typedef struct relay_info
 {
 	int is_active;
+	int is_responsive;
 	unsigned int max_uid;
 	char relay_id[RELAY_ID_LEN];
 	char relay_ip[RELAY_IP_MAX_LENGTH];
@@ -173,9 +180,11 @@ static int init_self_ip(char *thread_id);
 static int initialize_relay_verification_command(payload_data *verification_payload);
 static int wait_for_command_completion(int max_command_time, int *command_ret_status);
 static int verify_entry_relay_online(char *thread_id, conversation_info *ci_info, int *entry_relay_online);
-static int verify_relay_online(char *thread_id, conversation_info *ci_info, int relay_index, int *relay_is_online);
+static int verify_relay_online(char *thread_id, conversation_info *ci_info, int relay_index, history_type h_type, int *relay_is_online);
 static int verify_all_relays_online(char *thread_id, conversation_info *ci_info, int *all_relays_online);
-static int get_relays_online(char *thread_id, conversation_info *ci_info, int *online_indexes, int online_indexes_len);
+static int update_relay_connectivity_status(char *thread_id, conversation_info *ci_info);
+static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread_id, conversation_info *ci_info);
+static int attempt_to_reconnect_unresponsive_relays_via_reregister_id(char *thread_id, conversation_info *ci_info);
 static char get_send_packet_char(void);
 static int commit_current_key_info_to_history(relay_info *r_info);
 static int commit_key_info_to_history(conversation_info *ci_info);

@@ -530,7 +530,13 @@ int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 	if(ret < 0) {
 		return -1;
 	}
-	verify_all_relays_online("[MAIN THREAD]", ci_out, &all_relays_online);
+	ret = verify_all_relays_online("[MAIN THREAD]", ci_out, &all_relays_online);
+	if(ret < 0) {
+		return -1;
+	}
+	if(all_relays_online == 0) {
+		attempt_to_reconnect_unresponsive_relays_via_key_history("[MAIN THREAD]", ci_out);
+	}
 
 	#ifndef ENABLE_LOGGING
 		fprintf(stdout, "done\n");
@@ -1049,23 +1055,108 @@ static int wait_for_command_completion(int max_command_time, int *command_ret_st
 	return 0;
 }
 
+static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread_id, conversation_info *ci_info)
+{
+	int i, ret, relay_is_online, hist_index;
+	int reconnect_attempts;
+
+	if(ci_info == NULL) {
+		return -1;
+	}
+
+	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
+		if((ci_info->ri_pool[i].is_active == 1) && (ci_info->ri_pool[i].is_responsive == 0)) {
+
+			ret = verify_relay_online("[MAIN THREAD]", ci_info, i, DISABLE_HISTORY, &relay_is_online);
+			if(ret < 0) {
+				return -1;
+			}
+			if(relay_is_online == 0) {
+				reconnect_attempts = 0;
+				if(ci_info->ri_pool[i].kih_index >= PATH_HISTORY_LENGTH) {
+					ci_info->ri_pool[i].kih_index = 0;
+				}
+				hist_index = ci_info->ri_pool[i].kih_index - 1;
+				if(hist_index < 0) {
+					hist_index = PATH_HISTORY_LENGTH - 1;
+				}
+				while(1) {
+					while(1) {
+						ret = memcmp(&(ci_info->ri_pool[i].current_key_info), &(ci_info->ri_pool[i].key_info_history[hist_index]), sizeof(id_key_info));
+						if(ret != 0) {
+							break;
+						}
+						hist_index--;
+						if(hist_index < 0) {
+							hist_index = PATH_HISTORY_LENGTH - 1;
+						}
+						if(hist_index == ci_info->ri_pool[i].kih_index) {
+							break;
+						}
+					}
+					if(hist_index == ci_info->ri_pool[i].kih_index) {
+						break;
+					}
+					if(ci_info->ri_pool[i].key_info_history[hist_index].relay_user_id == 0) {
+						break;
+					}
+					
+					memcpy(&(ci_info->ri_pool[i].current_key_info), &(ci_info->ri_pool[i].key_info_history[hist_index]), sizeof(id_key_info));
+					ret = verify_relay_online("[MAIN THREAD]", ci_info, i, DISABLE_HISTORY, &relay_is_online);
+					if(ret < 0) {
+						return -1;
+					}
+					if(relay_is_online) {
+						break;
+					}
+					if(reconnect_attempts++ > MAX_UID_HISTORY_RECONNECT_ATTEMPTS) {
+						break;
+					}
+				}
+			}
+
+			if(relay_is_online) {
+				#ifdef ENABLE_LOGGING
+					fprintf(stdout, "%s Reconnect relay with index: %d and ip = %s\n", thread_id, i, ci_info->ri_pool[i].relay_ip);
+				#endif
+
+				ci_info->ri_pool[i].is_responsive = 1;
+			} else {
+				#ifdef ENABLE_LOGGING
+					fprintf(stdout, "%s Failed to reconnect relay with index: %d and ip = %s\n", thread_id, i, ci_info->ri_pool[i].relay_ip);
+				#endif
+			}
+		}
+	}	
+
+	return 0;
+}
+
+static int attempt_to_reconnect_unresponsive_relays_via_reregister_id(char *thread_id, conversation_info *ci_info)
+{
+	if(ci_info == NULL) {
+		return -1;
+	}
+
+	return 0;
+}
+
 static int verify_all_relays_online(char *thread_id, conversation_info *ci_info, int *all_relays_online)
 {
 	int i, ret;
-	int online_indexes[RELAY_POOL_MAX_SIZE];
 
 	if((ci_info == NULL) || (all_relays_online == NULL)) {
 		return -1;
 	}
 
-	ret = get_relays_online(thread_id, ci_info, online_indexes, RELAY_POOL_MAX_SIZE);
+	ret = update_relay_connectivity_status(thread_id, ci_info);
 	if(ret < 0) {
 		return -1;
 	}
 
 	*all_relays_online = 1;
 	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
-		if((ci_info->ri_pool[i].is_active == 1) && (online_indexes[i] == 0)){
+		if((ci_info->ri_pool[i].is_active == 1) && (ci_info->ri_pool[i].is_responsive == 0)) {
 			*all_relays_online = 0;
 		}
 	}	
@@ -1081,22 +1172,18 @@ static int verify_all_relays_online(char *thread_id, conversation_info *ci_info,
 	return 0;
 }
 
-static int get_relays_online(char *thread_id, conversation_info *ci_info, int *online_indexes, int online_indexes_len)
+static int update_relay_connectivity_status(char *thread_id, conversation_info *ci_info)
 {
 	int i, ret, relay_is_online;
 	unsigned int seed_val, index;
 	int num_checked, num_to_check;
 	char index_of_relays_used[RELAY_POOL_MAX_SIZE];
 
-	if((ci_info == NULL) || (online_indexes == NULL)) {
-		return -1;
-	}
-	if(online_indexes_len < RELAY_POOL_MAX_SIZE) {
+	if(ci_info == NULL) {
 		return -1;
 	}
 
 	memset(index_of_relays_used, 0, RELAY_POOL_MAX_SIZE);
-	memset(online_indexes, 0, RELAY_POOL_MAX_SIZE);
 
 	num_to_check = num_checked = 0;
 	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
@@ -1112,12 +1199,14 @@ static int get_relays_online(char *thread_id, conversation_info *ci_info, int *o
 		index %= RELAY_POOL_MAX_SIZE;
 		if(ci_info->ri_pool[index].is_active == 1) {
 			if(index_of_relays_used[index] == 0) {
-				ret = verify_relay_online("[MAIN THREAD]", ci_info, index, &relay_is_online);
+				ret = verify_relay_online("[MAIN THREAD]", ci_info, index, ENABLE_HISTORY, &relay_is_online);
 				if(ret < 0) {
 					return -1;
 				}
 				if(relay_is_online) {
-					online_indexes[index] = 1;
+					ci_info->ri_pool[index].is_responsive = 1;
+				} else {
+					ci_info->ri_pool[index].is_responsive = 0;
 				}
 				index_of_relays_used[index] = 1;
 				num_checked++;
@@ -1179,7 +1268,7 @@ static int verify_entry_relay_online(char *thread_id, conversation_info *ci_info
 	return 0;
 }
 
-static int verify_relay_online(char *thread_id, conversation_info *ci_info, int relay_index, int *relay_is_online)
+static int verify_relay_online(char *thread_id, conversation_info *ci_info, int relay_index, history_type h_type, int *relay_is_online)
 {
 	int ret, is_active, num_packets_in_send_queue;
 	route_info r_info, return_r_info;
