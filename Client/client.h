@@ -54,20 +54,28 @@ char *program_name = "Client";
 
 #define THREAD_COMMAND_DATA_SIZE 				(512)
 #define THREAD_RETURN_PACKET_CONFIRM_SIZE		(64)
-#define MAX_CHECK_NODE_TIME_SEC					(3)
+#define MAX_CHECK_NODE_TIME_SEC					(6)
+#define MAX_VERIFY_ROUTE_TIME_SEC				(6)
 
 const char *public_cert_dir = ".relay_certs";
 
 typedef enum {
 	REGISTER_UIDS_WITH_ENTRY_RELAY = 0,
 	REGISTER_UIDS_WITH_RELAY,
-	DUMMY_PACKET
+	DUMMY_PACKET,
+	DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS,
+	DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS_FOR_VERIFICATION
 } packet_type;
 
 typedef enum {
 	DISABLE_HISTORY = 0,
 	ENABLE_HISTORY
 } history_type;
+
+typedef enum {
+	VERIFY_USING_FORWARD_KEY_UID_PAIR = 0,
+	VERIFY_USING_RETURN_KEY_UID_PAIR
+} verification_type;
 
 typedef struct relay_indexer_info
 {
@@ -116,6 +124,12 @@ typedef struct route_info
 	int route_length;
 } route_info;
 
+typedef struct route_pair
+{
+	route_info forward_route;
+	route_info return_route;
+} route_pair;
+
 typedef struct route_history_info
 {
 	int relay_route[MAX_ROUTE_LENGTH*2];
@@ -137,9 +151,10 @@ typedef struct send_packet_node
 } send_packet_node;
 
 typedef enum {
-	NO_COMMAND				= 0,
-	VERIFY_RETURN_DATA,
-	PLACE_LATEST_IN_QUEUE
+	NO_COMMAND						= 0,
+	VERIFY_RETURN_DATA,				
+	PLACE_LATEST_IN_QUEUE,
+	VERIFY_DUMMY_PACKET_RECEIVED
 } command;
 
 typedef enum {
@@ -169,29 +184,6 @@ typedef struct thread_comm
 	uint8_t command_data[THREAD_COMMAND_DATA_SIZE];
 } thread_comm;
 
-static int init_globals(int argc, char const *argv[]);
-static int handle_received_packet(char *packet);
-static void print_ret_code(char *thread_id, int ret);
-static void handle_pthread_ret(char *thread_id, int ret, int clientfd);
-static int init_send_packet_thread(pthread_t *send_packet_thread);
-static int init_receive_packet_thread(pthread_t *receive_packet_thread);
-static int init_listening_socket(char *thread_id, unsigned int port, int *listening_socket /* out */);
-static int init_self_ip(char *thread_id);
-static int initialize_relay_verification_command(payload_data *verification_payload);
-static int wait_for_command_completion(int max_command_time, int *command_ret_status);
-static int verify_entry_relay_online(char *thread_id, conversation_info *ci_info, int *entry_relay_online);
-static int verify_relay_online(char *thread_id, conversation_info *ci_info, int relay_index, history_type h_type, int *relay_is_online);
-static int verify_all_relays_online(char *thread_id, conversation_info *ci_info, int *all_relays_online);
-static int update_relay_connectivity_status(char *thread_id, conversation_info *ci_info);
-static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread_id, conversation_info *ci_info);
-static int attempt_to_reconnect_unresponsive_relays_via_reregister_id(char *thread_id, conversation_info *ci_info);
-static char get_send_packet_char(void);
-static int commit_current_key_info_to_history(relay_info *r_info);
-static int commit_key_info_to_history(conversation_info *ci_info);
-static int commit_route_info_to_history(packet_type type, conversation_info *info, route_info *r_info, route_info *return_r_info, void *arg);
-static int print_key_history(relay_info *r_info);
-static int print_route_info_history(void);
-
 int place_packet_on_send_queue(unsigned char *packet, char *destination_ip, int destination_port);
 int get_number_of_packets_in_send_queue(int *num_packets);
 int get_friend_id(char *friend_id /* out */);
@@ -207,15 +199,20 @@ int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destin
 int generate_new_user_id(conversation_info *ci_info, int relay_index, unsigned int *uid /* out */);
 int is_valid_ip(char *ip, int *valid /* out */);
 int print_conversation(char *thread_id, conversation_info *ci_info);
-char* get_packet_type_str(packet_type type);
 int send_dummy_packet_no_return_route(conversation_info *ci_info);
 int send_dummy_packet_with_return_route(conversation_info *ci_info);
-int verify_entry_relay_online(char *thread_id, conversation_info *ci_info, int *entry_relay_online);
+int send_dummy_packet_with_routes_defined(conversation_info *ci_info, route_info *r_info, route_info *return_r_info);
 int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_info *r_info, unsigned char *packet);
 int generate_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */);
 int generate_return_onion_route_data_from_route_info(conversation_info *ci_info, route_info *return_r_info, unsigned char *packet);
 int generate_return_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *return_r_info, unsigned char *packet);
+int generate_onion_route_data_from_route_info_using_rr_pairs(conversation_info *ci_info, route_info *r_info, unsigned char *packet);
+int generate_onion_route_payload_from_route_info_using_rr_pairs(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */);
+int generate_onion_route_data_from_route_info_verify_using_rr_pairs(conversation_info *ci_info, route_info *r_info, unsigned char *packet);
+int generate_onion_route_payload_from_route_info_verify_using_rr_pairs(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */);
 int generate_packet_metadata(conversation_info *ci_info, payload_type p_type, route_info *return_r_info, payload_data *payload);
 int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info, payload_data *payload, void *other);
+int print_key_uid_pair(id_key_info *id_key_info_val);
+int print_route_pairs(char *thread_id, route_pair *r_pair, int route_pair_length);
 
 #endif

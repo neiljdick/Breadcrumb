@@ -2,7 +2,7 @@
 
 #define ENABLE_LOGGING
 #define DEBUG_MODE
-//#define ENABLE_RECEIVE_PACKET_LOGGING
+#define ENABLE_RECEIVE_PACKET_LOGGING
 //#define LAN_NETWORKING_MODE
 //#define PRINT_PACKETS
 //#define UID_CLASH_ENABLE
@@ -36,6 +36,39 @@ char curr_send_packet_char = '-';
 
 void *send_packet_handler(void *);
 void *receive_packet_handler(void *);
+
+static int init_globals(int argc, char const *argv[]);
+static int handle_received_packet(char *packet);
+static int is_message_packet(char *packet, int *is_message);
+static int handle_message_packet(char *packet);
+static int handle_command_packet(char *packet);
+static void print_ret_code(char *thread_id, int ret);
+static void handle_pthread_ret(char *thread_id, int ret, int clientfd);
+static int init_send_packet_thread(pthread_t *send_packet_thread);
+static int init_receive_packet_thread(pthread_t *receive_packet_thread);
+static int init_listening_socket(char *thread_id, unsigned int port, int *listening_socket /* out */);
+static int init_self_ip(char *thread_id);
+static int initialize_relay_verification_command(payload_data *verification_payload);
+static int wait_for_command_completion(int max_command_time, int *command_ret_status);
+static int verify_entry_relay_online(char *thread_id, conversation_info *ci_info, history_type h_type, verification_type v_type, int *entry_relay_online);
+static int verify_relay_online(char *thread_id, conversation_info *ci_info, int relay_index, history_type h_type, verification_type v_type, int *relay_is_online);
+static int verify_all_relays_online_rapid(char *thread_id, conversation_info *ci_info, int *all_relays_online);
+static int verify_all_relays_online_basic(char *thread_id, conversation_info *ci_info, int *all_relays_online);
+static int generate_rapid_verification_routes(char *thread_id, conversation_info *ci_info, route_pair *r_pair, int route_pair_length);
+static int update_non_entry_relay_connectivity_status(char *thread_id, conversation_info *ci_info);
+static int reconnect_to_entry_relay_via_key_history(char *thread_id, conversation_info *ci_info, int *reconnect_success);
+static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread_id, conversation_info *ci_info);
+static int attempt_to_reconnect_unresponsive_relays_via_reregister_id(char *thread_id, conversation_info *ci_info);
+static char get_send_packet_char(void);
+static int commit_current_key_info_to_history(relay_info *r_info);
+static int commit_key_info_to_history(conversation_info *ci_info);
+static int commit_route_info_to_history(packet_type type, conversation_info *info, route_info *r_info, route_info *return_r_info, void *arg);
+static int print_key_history(relay_info *r_info);
+static int print_return_key_history(relay_info *r_info);
+static int print_route_info_history(void);
+static char* get_packet_type_str(packet_type type);
+static char* get_history_type_str(history_type h_type);
+static char* get_verification_type_str(verification_type v_type);
 
 int main(int argc, char const *argv[])
 {
@@ -239,7 +272,7 @@ void *receive_packet_handler(void *ptr)
 
 static int handle_received_packet(char *packet)
 {
-	int ret;
+	int ret, is_message;
 
 	if(packet == NULL) {
 		return -1;
@@ -252,6 +285,49 @@ static int handle_received_packet(char *packet)
 		}
 		fprintf(stdout, "\n");
 	#endif
+
+	ret = is_message_packet(packet, &is_message);
+	if(ret < 0) {
+		return -1;
+	}
+	if(is_message) {
+		handle_message_packet(packet);
+	} else {
+		handle_command_packet(packet);
+	}
+
+	return 0;
+}
+
+static int is_message_packet(char *packet, int *is_message)
+{
+	if((packet == NULL) || (is_message == NULL)) {
+		return -1;
+	}
+
+	*is_message = 0; // TODO
+
+	return 0;
+}
+
+static int handle_message_packet(char *packet)
+{
+	if(packet == NULL) {
+		return -1;
+	}
+
+	// TODO
+
+	return 0;
+}
+
+static int handle_command_packet(char *packet)
+{
+	int ret;
+
+	if(packet == NULL) {
+		return -1;
+	}
 
 	sem_wait(&th_comm_sem);
 	if(th_comm.curr_status == IN_PROGRESS) {
@@ -268,6 +344,10 @@ static int handle_received_packet(char *packet)
 				}
 			break;
 			case PLACE_LATEST_IN_QUEUE:
+			break;
+			case VERIFY_DUMMY_PACKET_RECEIVED:
+				th_comm.curr_status = COMPLETE;
+				th_comm.curr_return_code = SUCCESS;
 			break;
 		}
 	}
@@ -530,14 +610,26 @@ int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 	if(ret < 0) {
 		return -1;
 	}
-	ret = verify_all_relays_online("[MAIN THREAD]", ci_out, &all_relays_online);
+
+	ret = verify_all_relays_online_rapid("[MAIN THREAD]", ci_out, &all_relays_online);
 	if(ret < 0) {
 		return -1;
 	}
-	if(all_relays_online == 0) {
-		attempt_to_reconnect_unresponsive_relays_via_key_history("[MAIN THREAD]", ci_out);
-	}
 
+/*
+	while(1) {
+
+		ret = verify_all_relays_online_basic("[MAIN THREAD]", ci_out, &all_relays_online);
+		if(ret < 0) {
+			return -1;
+		}
+		if(all_relays_online == 0) {
+			attempt_to_reconnect_unresponsive_relays_via_key_history("[MAIN THREAD]", ci_out);
+		}
+
+		sleep(3);
+	}
+*/
 	#ifndef ENABLE_LOGGING
 		fprintf(stdout, "done\n");
 	#endif
@@ -1032,6 +1124,17 @@ static int initialize_entry_relay_verification_command(payload_data *verificatio
 	return 0;
 }
 
+static int initialize_should_receive_dummy_packet_command(void)
+{
+	sem_wait(&th_comm_sem);
+	th_comm.curr_command = VERIFY_DUMMY_PACKET_RECEIVED; 
+	th_comm.curr_status = IN_PROGRESS;
+	th_comm.curr_attempts.num_attempts = 0;
+	sem_post(&th_comm_sem);
+
+	return 0;
+}
+
 static int wait_for_command_completion(int max_command_time, int *command_ret_status)
 {
 	int i;
@@ -1055,19 +1158,159 @@ static int wait_for_command_completion(int max_command_time, int *command_ret_st
 	return 0;
 }
 
+static int reconnect_to_entry_relay_via_key_history(char *thread_id, conversation_info *ci_info, int *reconnect_success)
+{
+	int ret, reconnect_attempts, hist_index_forward_key_pair, hist_index_reverse_key_pair;
+	id_key_info id_key_info_tmp;
+
+	if((ci_info == NULL) || (reconnect_success == NULL)) {
+		return -1;
+	}
+
+	ret = verify_entry_relay_online("[MAIN THREAD]", ci_info, ENABLE_HISTORY, VERIFY_USING_FORWARD_KEY_UID_PAIR, reconnect_success);
+	if(ret < 0) {
+		return -1;
+	}
+	if(*reconnect_success == 0) {
+		// Attempt reconnect with current key
+		ret = verify_entry_relay_online("[MAIN THREAD]", ci_info, DISABLE_HISTORY, VERIFY_USING_FORWARD_KEY_UID_PAIR, reconnect_success);
+		if(ret < 0) {
+			return -1;
+		}
+		if(*reconnect_success == 0) {
+			reconnect_attempts = 0;
+			if(ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index >= PATH_HISTORY_LENGTH) {
+				ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index = 0;
+			}
+			hist_index_forward_key_pair = ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index - 1;
+			if(hist_index_forward_key_pair < 0) {
+				hist_index_forward_key_pair = PATH_HISTORY_LENGTH - 1;
+			}
+			memset(&id_key_info_tmp, 0, sizeof(id_key_info));
+			while(1) {
+				while(1) {
+//					print_key_history(&(ci_info->ri_pool[ci_info->index_of_entry_relay]));
+//					print_key_uid_pair(&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_forward_key_pair]));
+//					fprintf(stdout, "hist_index_forward_key_pair: %d\n", hist_index_forward_key_pair);
+
+					ret = memcmp(&id_key_info_tmp, &(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_forward_key_pair]), (sizeof(id_key_info) / 2));
+					if(ret != 0) {
+						break;
+					}
+					hist_index_forward_key_pair--;
+					if(hist_index_forward_key_pair < 0) {
+						hist_index_forward_key_pair = PATH_HISTORY_LENGTH - 1;
+					}
+					if(hist_index_forward_key_pair == ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index) {
+						return 0;
+					}
+					if(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_forward_key_pair].relay_user_id == 0) {
+						return 0;
+					}
+				}
+				memcpy(&id_key_info_tmp, &(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_forward_key_pair]), (sizeof(id_key_info)/2));			
+				memcpy(&(ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info), 
+							&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_forward_key_pair]), (sizeof(id_key_info)/2));
+				ret = verify_entry_relay_online("[MAIN THREAD]", ci_info, DISABLE_HISTORY, VERIFY_USING_FORWARD_KEY_UID_PAIR, reconnect_success);
+				if(ret < 0) {
+					return -1;
+				}
+				if(*reconnect_success) {
+					break;
+				}
+				if(++reconnect_attempts > MAX_UID_HISTORY_RECONNECT_ATTEMPTS) {
+					return 0;
+				}
+			}
+		}
+	}
+
+	ret = verify_entry_relay_online("[MAIN THREAD]", ci_info, ENABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, reconnect_success);
+	if(ret < 0) {
+		return -1;
+	}
+	if(*reconnect_success == 0) {
+		// Attempt reconnect with current key
+		ret = verify_entry_relay_online("[MAIN THREAD]", ci_info, DISABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, reconnect_success);
+		if(ret < 0) {
+			return -1;
+		}
+		if(*reconnect_success == 0) {
+			reconnect_attempts = 0;
+			if(ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index >= PATH_HISTORY_LENGTH) {
+				ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index = 0;
+			}
+			hist_index_reverse_key_pair = ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index - 1;
+			if(hist_index_reverse_key_pair < 0) {
+				hist_index_reverse_key_pair = PATH_HISTORY_LENGTH - 1;
+			}
+			memset(&id_key_info_tmp, 0, sizeof(id_key_info));
+			while(1) {
+				while(1) {
+//					print_return_key_history(&(ci_info->ri_pool[ci_info->index_of_entry_relay]));
+//					print_key_uid_pair(&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_reverse_key_pair]) + (sizeof(id_key_info) / 2));
+//					fprintf(stdout, "hist_index_reverse_key_pair: %d\n", hist_index_reverse_key_pair);
+
+					ret = memcmp(&id_key_info_tmp, (&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_reverse_key_pair]) + (sizeof(id_key_info) / 2)), (sizeof(id_key_info) / 2));
+					if(ret != 0) {
+						break;
+					}
+					hist_index_reverse_key_pair--;
+					if(hist_index_reverse_key_pair < 0) {
+						hist_index_reverse_key_pair = PATH_HISTORY_LENGTH - 1;
+					}
+					if(hist_index_reverse_key_pair == ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index) {
+						return 0;
+					}
+					if(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_reverse_key_pair].relay_user_id == 0) {
+						return 0;
+					}
+				}
+				memcpy(&id_key_info_tmp, (&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_reverse_key_pair]) + (sizeof(id_key_info) / 2)), (sizeof(id_key_info)/2));			
+				memcpy((&(ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info) + (sizeof(id_key_info) / 2)), 
+							(&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_reverse_key_pair]) + (sizeof(id_key_info) / 2)), (sizeof(id_key_info)/2));
+				ret = verify_entry_relay_online("[MAIN THREAD]", ci_info, DISABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, reconnect_success);
+				if(ret < 0) {
+					return -1;
+				}
+				if(*reconnect_success) {
+					break;
+				}
+				if(++reconnect_attempts > MAX_UID_HISTORY_RECONNECT_ATTEMPTS) {
+					return 0;
+				}
+			}
+		}
+	}
+
+	if(*reconnect_success) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Reconnected to entry relay (ip = %s)\n", thread_id, ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip);
+		#endif
+
+		ci_info->ri_pool[ci_info->index_of_entry_relay].is_responsive = 1;
+	} else {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Failed to reconnect to entry relay (ip = %s)\n", thread_id, ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip);
+		#endif
+	}
+
+	return 0;
+}
+
 static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread_id, conversation_info *ci_info)
 {
-	int i, ret, relay_is_online, hist_index;
-	int reconnect_attempts;
+	int i, ret, relay_is_online, forward_hist_index, reverse_hist_index;
+	int reconnect_attempts, entry_relay_online;
+	id_key_info id_key_info_tmp;
 
 	if(ci_info == NULL) {
 		return -1;
 	}
 
 	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
-		if((ci_info->ri_pool[i].is_active == 1) && (ci_info->ri_pool[i].is_responsive == 0)) {
-
-			ret = verify_relay_online("[MAIN THREAD]", ci_info, i, DISABLE_HISTORY, &relay_is_online);
+		if((ci_info->ri_pool[i].is_active == 1) && (ci_info->ri_pool[i].is_responsive == 0)) {			
+			ret = verify_relay_online("[MAIN THREAD]", ci_info, i, DISABLE_HISTORY, VERIFY_USING_FORWARD_KEY_UID_PAIR, &relay_is_online);
 			if(ret < 0) {
 				return -1;
 			}
@@ -1076,33 +1319,99 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 				if(ci_info->ri_pool[i].kih_index >= PATH_HISTORY_LENGTH) {
 					ci_info->ri_pool[i].kih_index = 0;
 				}
-				hist_index = ci_info->ri_pool[i].kih_index - 1;
-				if(hist_index < 0) {
-					hist_index = PATH_HISTORY_LENGTH - 1;
+				forward_hist_index = ci_info->ri_pool[i].kih_index - 1;
+				if(forward_hist_index < 0) {
+					forward_hist_index = PATH_HISTORY_LENGTH - 1;
 				}
+				memset(&id_key_info_tmp, 0, sizeof(id_key_info_tmp));
 				while(1) {
+					ret = reconnect_to_entry_relay_via_key_history(thread_id, ci_info, &entry_relay_online);
+					if(ret < 0) {
+						return -1;
+					}
+					if(entry_relay_online == 0) {
+						return 0;
+					}
 					while(1) {
-						ret = memcmp(&(ci_info->ri_pool[i].current_key_info), &(ci_info->ri_pool[i].key_info_history[hist_index]), sizeof(id_key_info));
+						ret = memcmp(&id_key_info_tmp, &(ci_info->ri_pool[i].key_info_history[forward_hist_index]), (sizeof(id_key_info)/2));
 						if(ret != 0) {
 							break;
 						}
-						hist_index--;
-						if(hist_index < 0) {
-							hist_index = PATH_HISTORY_LENGTH - 1;
+						forward_hist_index--;
+						if(forward_hist_index < 0) {
+							forward_hist_index = PATH_HISTORY_LENGTH - 1;
 						}
-						if(hist_index == ci_info->ri_pool[i].kih_index) {
+						if(forward_hist_index == ci_info->ri_pool[i].kih_index) {
 							break;
 						}
 					}
-					if(hist_index == ci_info->ri_pool[i].kih_index) {
+					if(forward_hist_index == ci_info->ri_pool[i].kih_index) {
 						break;
 					}
-					if(ci_info->ri_pool[i].key_info_history[hist_index].relay_user_id == 0) {
+					if(ci_info->ri_pool[i].key_info_history[forward_hist_index].relay_user_id == 0) {
 						break;
 					}
 					
-					memcpy(&(ci_info->ri_pool[i].current_key_info), &(ci_info->ri_pool[i].key_info_history[hist_index]), sizeof(id_key_info));
-					ret = verify_relay_online("[MAIN THREAD]", ci_info, i, DISABLE_HISTORY, &relay_is_online);
+					memcpy(&id_key_info_tmp, &(ci_info->ri_pool[i].key_info_history[forward_hist_index]), (sizeof(id_key_info)/2));
+					memcpy(&(ci_info->ri_pool[i].current_key_info), &(ci_info->ri_pool[i].key_info_history[forward_hist_index]), (sizeof(id_key_info)/2));
+					ret = verify_relay_online("[MAIN THREAD]", ci_info, i, DISABLE_HISTORY, VERIFY_USING_FORWARD_KEY_UID_PAIR, &relay_is_online);
+					if(ret < 0) {
+						return -1;
+					}
+					if(relay_is_online) {
+						break;
+					}
+					if(reconnect_attempts++ > MAX_UID_HISTORY_RECONNECT_ATTEMPTS) {
+						break;
+					}
+				}
+			}
+
+			ret = verify_relay_online("[MAIN THREAD]", ci_info, i, DISABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, &relay_is_online);
+			if(ret < 0) {
+				return -1;
+			}
+			if(relay_is_online == 0) {
+				reconnect_attempts = 0;
+				if(ci_info->ri_pool[i].kih_index >= PATH_HISTORY_LENGTH) {
+					ci_info->ri_pool[i].kih_index = 0;
+				}
+				reverse_hist_index = ci_info->ri_pool[i].kih_index - 1;
+				if(reverse_hist_index < 0) {
+					reverse_hist_index = PATH_HISTORY_LENGTH - 1;
+				}
+				memset(&id_key_info_tmp, 0, sizeof(id_key_info_tmp));
+				while(1) {
+					ret = reconnect_to_entry_relay_via_key_history(thread_id, ci_info, &entry_relay_online);
+					if(ret < 0) {
+						return -1;
+					}
+					if(entry_relay_online == 0) {
+						return 0;
+					}
+					while(1) {
+						ret = memcmp(&id_key_info_tmp, (&(ci_info->ri_pool[i].key_info_history[reverse_hist_index]) + (sizeof(id_key_info)/2)), (sizeof(id_key_info)/2));
+						if(ret != 0) {
+							break;
+						}
+						reverse_hist_index--;
+						if(reverse_hist_index < 0) {
+							reverse_hist_index = PATH_HISTORY_LENGTH - 1;
+						}
+						if(reverse_hist_index == ci_info->ri_pool[i].kih_index) {
+							break;
+						}
+					}
+					if(reverse_hist_index == ci_info->ri_pool[i].kih_index) {
+						break;
+					}
+					if(ci_info->ri_pool[i].key_info_history[reverse_hist_index].relay_user_id == 0) {
+						break;
+					}
+					
+					memcpy(&id_key_info_tmp, (&(ci_info->ri_pool[i].key_info_history[reverse_hist_index]) + (sizeof(id_key_info)/2)), (sizeof(id_key_info)/2));
+					memcpy((&(ci_info->ri_pool[i].current_key_info) + (sizeof(id_key_info)/2)), (&(ci_info->ri_pool[i].key_info_history[reverse_hist_index]) + (sizeof(id_key_info)/2)), (sizeof(id_key_info)/2));
+					ret = verify_relay_online("[MAIN THREAD]", ci_info, i, DISABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, &relay_is_online);
 					if(ret < 0) {
 						return -1;
 					}
@@ -1127,7 +1436,7 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 				#endif
 			}
 		}
-	}	
+	}
 
 	return 0;
 }
@@ -1141,7 +1450,170 @@ static int attempt_to_reconnect_unresponsive_relays_via_reregister_id(char *thre
 	return 0;
 }
 
-static int verify_all_relays_online(char *thread_id, conversation_info *ci_info, int *all_relays_online)
+static int generate_rapid_verification_routes(char *thread_id, conversation_info *ci_info, route_pair *r_pair, int route_pair_length)
+{
+	int ret, i, num_active_relays, current_route_index;
+	int forward_routes_covered, reverse_routes_covered;
+	int forward_routes_to_cover, reverse_routes_to_cover;
+	char index_of_relays_used[RELAY_POOL_MAX_SIZE]; // Bit flags -> | X | X | X | X | X | X | REVERSE COVERED | FORWARD COVERED |
+	route_info r_info, rr_info;
+	int loop_iterations;
+
+	if((ci_info == NULL) || (r_pair == NULL)) {
+		return -1;
+	}
+	if(route_pair_length < RELAY_POOL_MAX_SIZE) {
+		return -1;
+	}
+	
+	memset(index_of_relays_used, 0, RELAY_POOL_MAX_SIZE);
+	memset(r_pair, 0, (route_pair_length * sizeof(r_pair)));
+
+	num_active_relays = 0;
+	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
+		if(ci_info->ri_pool[i].is_active) {
+			num_active_relays++;
+		}
+	}
+
+	current_route_index = 0;
+	forward_routes_covered = reverse_routes_covered = 0;
+	while(1) {
+		loop_iterations = 0;
+		while(1) {
+			forward_routes_to_cover = 0;
+			ret = generate_random_route(ci_info, &r_info);
+			if(ret < 0) {
+				return -1;
+			}
+			for (i = 0; i < r_info.route_length; ++i) {
+				if((index_of_relays_used[r_info.relay_route[i]] & 0x01) == 0) {
+					forward_routes_to_cover++;
+				}
+			}
+			if(forward_routes_to_cover == MAX_ROUTE_LENGTH) {
+				break;
+			} else if((forward_routes_to_cover + forward_routes_covered) >= num_active_relays) {
+				break;
+			} else if(++loop_iterations > 20) {
+				break;
+			}
+		}
+		forward_routes_covered += forward_routes_to_cover;
+
+		loop_iterations = 0;
+		while(1) {
+			reverse_routes_to_cover = 0;
+			ret = generate_random_return_route(ci_info, &r_info, &rr_info);
+			if(ret < 0) {
+				return -1;
+			}
+			for (i = 0; i < rr_info.route_length; ++i) {
+				if((index_of_relays_used[rr_info.relay_route[i]] & 0x02) == 0) {
+					reverse_routes_to_cover++;
+				}
+			}
+			if(reverse_routes_to_cover == MAX_ROUTE_LENGTH) {
+				break;
+			} else if((reverse_routes_to_cover + reverse_routes_covered) >= num_active_relays) {
+				break;
+			} else if(++loop_iterations > 20) {
+				break;
+			}
+		}
+		reverse_routes_covered += reverse_routes_to_cover;
+
+		for (i = 0; i < r_info.route_length; ++i) {
+			index_of_relays_used[r_info.relay_route[i]] |= 0x01;
+		}
+		for (i = 0; i < rr_info.route_length; ++i) {
+			index_of_relays_used[rr_info.relay_route[i]] |= 0x02;
+		}
+
+		memcpy(&(r_pair[current_route_index].forward_route), &r_info, sizeof(r_info));
+		memcpy(&(r_pair[current_route_index].return_route), &rr_info, sizeof(rr_info));
+		current_route_index++;
+		if(current_route_index >= route_pair_length) {
+			return -1;
+		}
+		if(forward_routes_covered >= num_active_relays) {
+			if(reverse_routes_covered >= num_active_relays) {
+				break;
+			}
+		}
+	}
+	
+	return 0;
+}
+
+static int verify_all_relays_online_rapid(char *thread_id, conversation_info *ci_info, int *all_relays_online)
+{
+	int ret, curr_route_index, num_packets_in_send_queue;
+	int dummy_packet_received;
+	route_pair r_pair[RELAY_POOL_MAX_SIZE];
+
+	if((ci_info == NULL) || (all_relays_online == NULL)) {
+		return -1;
+	}
+
+	ret = generate_rapid_verification_routes(thread_id, ci_info, r_pair, sizeof(r_pair)/sizeof(route_pair));
+	if(ret < 0) {
+		return -1;
+	}
+	#ifdef ENABLE_LOGGING
+		fprintf(stderr, "%s Attempting to verify all relays are online rapidly\n", thread_id);
+		print_route_pairs(thread_id, r_pair, sizeof(r_pair)/sizeof(route_pair));
+	#endif
+
+	*all_relays_online = 1;
+	curr_route_index = 0;
+	while(1) {
+		if(r_pair[curr_route_index].forward_route.route_length == 0) {
+			break;
+		}
+		if(r_pair[curr_route_index].return_route.route_length == 0) {
+			break;
+		}
+
+		num_packets_in_send_queue = -1;
+		while(num_packets_in_send_queue != 0) {
+			get_number_of_packets_in_send_queue(&num_packets_in_send_queue);
+			sleep(1);
+		}
+
+		initialize_should_receive_dummy_packet_command();
+
+		ret = send_dummy_packet_with_routes_defined(ci_info, &(r_pair[curr_route_index].forward_route), &(r_pair[curr_route_index].return_route));
+		if(ret < 0) {
+			return -1;
+		}
+		ret = wait_for_command_completion(MAX_VERIFY_ROUTE_TIME_SEC, &dummy_packet_received);
+		if(ret < 0) {
+			return -1;
+		}
+		if(dummy_packet_received == 0) {
+			*all_relays_online = 0;
+			break;
+		}
+
+		curr_route_index++;
+		if(curr_route_index >= (sizeof(r_pair)/sizeof(route_pair))) {
+			break;
+		}
+	}
+
+	#ifdef ENABLE_LOGGING
+		if(*all_relays_online) {
+			fprintf(stdout, "%s Rapidly verification of all relays successful\n", thread_id);
+		} else {
+			fprintf(stdout, "%s Rapidly verification of all relays failed\n", thread_id);
+		}
+	#endif
+
+	return 0;
+}
+
+static int verify_all_relays_online_basic(char *thread_id, conversation_info *ci_info, int *all_relays_online)
 {
 	int i, ret;
 
@@ -1149,7 +1621,24 @@ static int verify_all_relays_online(char *thread_id, conversation_info *ci_info,
 		return -1;
 	}
 
-	ret = update_relay_connectivity_status(thread_id, ci_info);
+	ret = verify_entry_relay_online(thread_id, ci_info, ENABLE_HISTORY, VERIFY_USING_FORWARD_KEY_UID_PAIR, &(ci_info->ri_pool[ci_info->index_of_entry_relay].is_responsive));
+	if(ret < 0) {
+		return -1;
+	}
+	if(ci_info->ri_pool[ci_info->index_of_entry_relay].is_responsive == 0) {
+		*all_relays_online = 0;
+		return 0;
+	}
+	ret = verify_entry_relay_online(thread_id, ci_info, ENABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, &(ci_info->ri_pool[ci_info->index_of_entry_relay].is_responsive));
+	if(ret < 0) {
+		return -1;
+	}
+	if(ci_info->ri_pool[ci_info->index_of_entry_relay].is_responsive == 0) {
+		*all_relays_online = 0;
+		return 0;
+	}
+
+	ret = update_non_entry_relay_connectivity_status(thread_id, ci_info);
 	if(ret < 0) {
 		return -1;
 	}
@@ -1159,7 +1648,7 @@ static int verify_all_relays_online(char *thread_id, conversation_info *ci_info,
 		if((ci_info->ri_pool[i].is_active == 1) && (ci_info->ri_pool[i].is_responsive == 0)) {
 			*all_relays_online = 0;
 		}
-	}	
+	}
 
 	#ifdef ENABLE_LOGGING
 		if(*all_relays_online) {
@@ -1172,9 +1661,9 @@ static int verify_all_relays_online(char *thread_id, conversation_info *ci_info,
 	return 0;
 }
 
-static int update_relay_connectivity_status(char *thread_id, conversation_info *ci_info)
+static int update_non_entry_relay_connectivity_status(char *thread_id, conversation_info *ci_info)
 {
-	int i, ret, relay_is_online;
+	int i, ret, relay_is_online, entry_relay_online;
 	unsigned int seed_val, index;
 	int num_checked, num_to_check;
 	char index_of_relays_used[RELAY_POOL_MAX_SIZE];
@@ -1187,7 +1676,7 @@ static int update_relay_connectivity_status(char *thread_id, conversation_info *
 
 	num_to_check = num_checked = 0;
 	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
-		if(ci_info->ri_pool[i].is_active == 1) {
+		if((ci_info->ri_pool[i].is_active == 1) && (i != ci_info->index_of_entry_relay)) {
 			num_to_check++;
 		}
 	}
@@ -1197,16 +1686,34 @@ static int update_relay_connectivity_status(char *thread_id, conversation_info *
 		seed_val ^= index;
 
 		index %= RELAY_POOL_MAX_SIZE;
-		if(ci_info->ri_pool[index].is_active == 1) {
+		if((ci_info->ri_pool[index].is_active == 1) && (index != ci_info->index_of_entry_relay)) {
 			if(index_of_relays_used[index] == 0) {
-				ret = verify_relay_online("[MAIN THREAD]", ci_info, index, ENABLE_HISTORY, &relay_is_online);
+				ret = verify_relay_online("[MAIN THREAD]", ci_info, index, ENABLE_HISTORY, VERIFY_USING_FORWARD_KEY_UID_PAIR, &relay_is_online);
 				if(ret < 0) {
 					return -1;
 				}
 				if(relay_is_online) {
-					ci_info->ri_pool[index].is_responsive = 1;
+					ret = verify_relay_online("[MAIN THREAD]", ci_info, index, ENABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, &relay_is_online);
+					if(ret < 0) {
+						return -1;
+					}
+					if(relay_is_online) {
+						ci_info->ri_pool[index].is_responsive = 1;
+					} else {
+						ci_info->ri_pool[index].is_responsive = 0;
+					}
 				} else {
 					ci_info->ri_pool[index].is_responsive = 0;
+				}
+				if(ci_info->ri_pool[index].is_responsive == 0) {
+					ci_info->ri_pool[index].is_responsive = 0;
+					ret = reconnect_to_entry_relay_via_key_history(thread_id, ci_info, &entry_relay_online);
+					if(ret < 0) {
+						return -1;
+					}
+					if(entry_relay_online == 0) {
+						return 0;
+					}
 				}
 				index_of_relays_used[index] = 1;
 				num_checked++;
@@ -1217,7 +1724,7 @@ static int update_relay_connectivity_status(char *thread_id, conversation_info *
 	return 0;
 }
 
-static int verify_entry_relay_online(char *thread_id, conversation_info *ci_info, int *entry_relay_online)
+static int verify_entry_relay_online(char *thread_id, conversation_info *ci_info, history_type h_type, verification_type v_type, int *entry_relay_online)
 {
 	int ret, num_packets_in_send_queue;
 	route_info r_info;
@@ -1236,8 +1743,10 @@ static int verify_entry_relay_online(char *thread_id, conversation_info *ci_info
 	r_info.route_length = 1;
 	r_info.relay_route[0] = ci_info->index_of_entry_relay;
 
-	commit_key_info_to_history(ci_info);
-	commit_route_info_to_history(DUMMY_PACKET, ci_info, &r_info, NULL, NULL);
+	if(h_type == ENABLE_HISTORY) {
+		commit_key_info_to_history(ci_info);
+		commit_route_info_to_history(DUMMY_PACKET, ci_info, &r_info, NULL, NULL);
+	}
 
 	ret = fill_buf_with_random_data((unsigned char *)&check_relay_payload, sizeof(check_relay_payload));
 	if(ret < 0) {
@@ -1247,9 +1756,16 @@ static int verify_entry_relay_online(char *thread_id, conversation_info *ci_info
 
 	initialize_entry_relay_verification_command(&check_relay_payload);	
 
-	ret = send_packet(DUMMY_PACKET, ci_info, &r_info, &check_relay_payload, NULL);
-	if(ret < 0) {
-		return -1;
+	if(v_type == VERIFY_USING_FORWARD_KEY_UID_PAIR) {
+		ret = send_packet(DUMMY_PACKET, ci_info, &r_info, &check_relay_payload, NULL);
+		if(ret < 0) {
+			return -1;
+		}
+	} else {
+		ret = send_packet(DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS, ci_info, &r_info, &check_relay_payload, NULL);
+		if(ret < 0) {
+			return -1;
+		}
 	}
 
 	ret = wait_for_command_completion(MAX_CHECK_NODE_TIME_SEC, entry_relay_online);
@@ -1259,16 +1775,18 @@ static int verify_entry_relay_online(char *thread_id, conversation_info *ci_info
 
 	#ifdef ENABLE_LOGGING
 		if(*entry_relay_online) {
-			fprintf(stdout, "%s Found entry relay (index = %d, ip = %s) is online\n", thread_id, ci_info->index_of_entry_relay, ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip);
+			fprintf(stdout, "%s Found entry relay (index = %d, ip = %s) is online, using verification type = %s\n", 
+				thread_id, ci_info->index_of_entry_relay, ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, get_verification_type_str(v_type));
 		} else {
-			fprintf(stdout, "%s Found entry relay (index = %d, ip = %s) is offline\n", thread_id, ci_info->index_of_entry_relay, ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip);
+			fprintf(stdout, "%s Found entry relay (index = %d, ip = %s) is offline, using verification type = %s\n", 
+				thread_id, ci_info->index_of_entry_relay, ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, get_verification_type_str(v_type));
 		}
 	#endif
 
 	return 0;
 }
 
-static int verify_relay_online(char *thread_id, conversation_info *ci_info, int relay_index, history_type h_type, int *relay_is_online)
+static int verify_relay_online(char *thread_id, conversation_info *ci_info, int relay_index, history_type h_type, verification_type v_type, int *relay_is_online)
 {
 	int ret, is_active, num_packets_in_send_queue;
 	route_info r_info, return_r_info;
@@ -1287,7 +1805,12 @@ static int verify_relay_online(char *thread_id, conversation_info *ci_info, int 
 		return -1;
 	}
 	if(ci_info->index_of_entry_relay == relay_index) {
-		ret = verify_entry_relay_online(thread_id, ci_info, relay_is_online);
+		ret = verify_entry_relay_online(thread_id, ci_info, h_type, VERIFY_USING_FORWARD_KEY_UID_PAIR, relay_is_online);
+		if(*relay_is_online == 0) {
+			return ret;
+		} else {
+			ret = verify_entry_relay_online(thread_id, ci_info, h_type, VERIFY_USING_RETURN_KEY_UID_PAIR, relay_is_online);
+		}
 		return ret;
 	}
 
@@ -1304,9 +1827,11 @@ static int verify_relay_online(char *thread_id, conversation_info *ci_info, int 
 	return_r_info.route_length = 1;
 	return_r_info.relay_route[0] = ci_info->index_of_entry_relay;
 
-	commit_key_info_to_history(ci_info);
-	commit_route_info_to_history(DUMMY_PACKET, ci_info, &r_info, &return_r_info, NULL);
-
+	if(h_type == ENABLE_HISTORY) {
+		commit_key_info_to_history(ci_info);
+		commit_route_info_to_history(DUMMY_PACKET, ci_info, &r_info, &return_r_info, NULL);
+	}
+	
 	ret = fill_buf_with_random_data((unsigned char *)&check_relay_payload, sizeof(check_relay_payload));
 	if(ret < 0) {
 		return -1;
@@ -1328,9 +1853,16 @@ static int verify_relay_online(char *thread_id, conversation_info *ci_info, int 
 		return -1;
 	}
 
-	ret = send_packet(DUMMY_PACKET, ci_info, &r_info, &check_relay_payload, NULL);
-	if(ret < 0) {
-		return -1;
+	if(v_type == VERIFY_USING_FORWARD_KEY_UID_PAIR) {
+		ret = send_packet(DUMMY_PACKET, ci_info, &r_info, &check_relay_payload, NULL);
+		if(ret < 0) {
+			return -1;
+		}
+	} else {
+		ret = send_packet(DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS_FOR_VERIFICATION, ci_info, &r_info, &check_relay_payload, NULL);
+		if(ret < 0) {
+			return -1;
+		}
 	}
 
 	ret = wait_for_command_completion(MAX_CHECK_NODE_TIME_SEC, relay_is_online);
@@ -1340,9 +1872,9 @@ static int verify_relay_online(char *thread_id, conversation_info *ci_info, int 
 
 	#ifdef ENABLE_LOGGING
 		if(*relay_is_online) {
-			fprintf(stdout, "%s Found relay (index = %d, ip = %s) is online\n", thread_id, relay_index, ci_info->ri_pool[relay_index].relay_ip);
+			fprintf(stdout, "%s Found relay (index = %d, ip = %s) is online, using verification type = %s\n", thread_id, relay_index, ci_info->ri_pool[relay_index].relay_ip, get_verification_type_str(v_type));
 		} else {
-			fprintf(stdout, "%s Found relay (index = %d, ip = %s) is offline\n", thread_id, relay_index, ci_info->ri_pool[relay_index].relay_ip);
+			fprintf(stdout, "%s Found relay (index = %d, ip = %s) is offline, using verification type = %s\n", thread_id, relay_index, ci_info->ri_pool[relay_index].relay_ip, get_verification_type_str(v_type));
 		}
 	#endif
 
@@ -1446,6 +1978,43 @@ int send_dummy_packet_with_return_route(conversation_info *ci_info)
 	}
 
 	ret = send_packet(DUMMY_PACKET, ci_info, &r_info, &dummy_packet_payload, NULL);
+	if(ret < 0) {
+		return -1;
+	}
+
+	return 0;
+}
+
+int send_dummy_packet_with_routes_defined(conversation_info *ci_info, route_info *r_info, route_info *return_r_info)
+{
+	int ret;
+	payload_data dummy_packet_payload;
+
+	if((ci_info == NULL) || (r_info == NULL) || (return_r_info == NULL)) {
+		return -1;
+	}
+
+	commit_key_info_to_history(ci_info);
+	commit_route_info_to_history(DUMMY_PACKET, ci_info, r_info, return_r_info, NULL);
+	
+	ret = fill_buf_with_random_data((unsigned char *)&dummy_packet_payload, sizeof(dummy_packet_payload));
+	if(ret < 0) {
+		return -1;
+	}
+	ret = generate_return_onion_route_data_from_route_info(ci_info, return_r_info, dummy_packet_payload.payload);
+	if(ret < 0) {
+		return -1;
+	}
+	ret = generate_return_onion_route_payload_from_route_info(ci_info, return_r_info, dummy_packet_payload.payload);
+	if(ret < 0) {
+		return -1;
+	}
+	ret = generate_packet_metadata(ci_info, DUMMY_PACKET_W_RETURN_ROUTE, return_r_info, &dummy_packet_payload);
+	if(ret < 0) {
+		return -1;
+	}
+
+	ret = send_packet(DUMMY_PACKET, ci_info, r_info, &dummy_packet_payload, NULL);
 	if(ret < 0) {
 		return -1;
 	}
@@ -1644,7 +2213,7 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 
 			#ifdef ENABLE_LOGGING
 				fprintf(stdout, "[MAIN THREAD] %s with relay = %s, via relay = %s, Relay UID = %u, Payload UID = %u\n", 
-						get_packet_type_str(type), ci_info->ri_pool[relay_register_index].relay_ip, destination_ip, or_data[relay_register_index].uid, or_payload_data[relay_register_index].uid);
+						get_packet_type_str(type), ci_info->ri_pool[relay_register_index].relay_ip, destination_ip, or_data[0].uid, or_payload_data[0].uid);
 			#endif
 
 		break;
@@ -1671,7 +2240,54 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 			if(ret < 0) {
 				return -1;
 			}
+		break;
+		case DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS:
+			if(r_info == NULL) {
+				return -1;
+			}
 
+			first_relay_index = r_info->relay_route[0];
+			if((first_relay_index < 0) || (first_relay_index >= RELAY_POOL_MAX_SIZE)) {
+				return -1;
+			}
+			if(ci_info->ri_pool[first_relay_index].is_active == 0) {
+				return -1;
+			}
+			memcpy(destination_ip, ci_info->ri_pool[first_relay_index].relay_ip, RELAY_IP_MAX_LENGTH);
+			*destination_port = message_port;
+
+			ret = generate_onion_route_data_from_route_info_using_rr_pairs(ci_info, r_info, packet);
+			if(ret < 0) {
+				return -1;
+			}
+			ret = generate_onion_route_payload_from_route_info_using_rr_pairs(ci_info, r_info, payload, packet);
+			if(ret < 0) {
+				return -1;
+			}
+		break;
+		case DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS_FOR_VERIFICATION:
+			if(r_info == NULL) {
+				return -1;
+			}
+
+			first_relay_index = r_info->relay_route[0];
+			if((first_relay_index < 0) || (first_relay_index >= RELAY_POOL_MAX_SIZE)) {
+				return -1;
+			}
+			if(ci_info->ri_pool[first_relay_index].is_active == 0) {
+				return -1;
+			}
+			memcpy(destination_ip, ci_info->ri_pool[first_relay_index].relay_ip, RELAY_IP_MAX_LENGTH);
+			*destination_port = message_port;
+
+			ret = generate_onion_route_data_from_route_info_verify_using_rr_pairs(ci_info, r_info, packet);
+			if(ret < 0) {
+				return -1;
+			}
+			ret = generate_onion_route_payload_from_route_info_verify_using_rr_pairs(ci_info, r_info, payload, packet);
+			if(ret < 0) {
+				return -1;
+			}
 		break;
 	}
 
@@ -1793,6 +2409,291 @@ int generate_onion_route_payload_from_route_info(conversation_info *ci_info, rou
 		}
 		ci_info->ri_pool[route_index].current_key_info.payload_relay_user_id = or_data[i].ord_enc.new_uid;
 		memcpy(ci_info->ri_pool[route_index].current_key_info.payload_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		memcpy((encrypt_buffer + or_offset + cipher_text_byte_offset), (packet + or_offset + cipher_text_byte_offset), (packet_size_bytes - or_offset - cipher_text_byte_offset));
+
+		or_offset -= sizeof(onion_route_data);
+	}
+
+	return 0;
+}
+
+int generate_onion_route_data_from_route_info_using_rr_pairs(conversation_info *ci_info, route_info *r_info, unsigned char *packet)
+{
+	int i, ret;
+	int route_index, previous_route_index;
+	unsigned int or_offset;
+	onion_route_data or_data[MAX_ROUTE_LENGTH];
+	unsigned char encrypt_buffer[packet_size_bytes];
+
+	if((ci_info == NULL) || (r_info == NULL) || (packet == NULL)) {
+		return -1;
+	}
+	if(r_info->route_length > MAX_ROUTE_LENGTH) {
+		return -1;
+	}
+
+	ret = fill_buf_with_random_data((unsigned char *)or_data, sizeof(or_data));
+	if(ret < 0) {
+		return -1;
+	}
+
+	previous_route_index = -1;
+	or_offset = (r_info->route_length - 1) * sizeof(onion_route_data);
+	for (i = (r_info->route_length - 1); i >= 0; i--) {
+		route_index = r_info->relay_route[i];
+		if((route_index < 0) || (route_index >= RELAY_POOL_MAX_SIZE)) {
+			return -1;
+		}
+		if(ci_info->ri_pool[route_index].is_active != 1) {
+			return -1;
+		}
+
+		generate_AES_key((unsigned char *)or_data[i].iv, AES_KEY_SIZE_BYTES);
+		or_data[i].uid = ci_info->ri_pool[route_index].current_key_info.return_route_user_id;
+		generate_new_user_id(ci_info, route_index, &(or_data[i].ord_enc.new_uid));
+		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		or_data[i].ord_enc.next_pkg_port = message_port;
+		if(previous_route_index < 0) {
+			or_data[i].ord_enc.next_pkg_ip = 0;
+		} else {
+			inet_aton(ci_info->ri_pool[previous_route_index].relay_ip, (struct in_addr *)&(or_data[i].ord_enc.next_pkg_ip));
+		}
+
+		or_data[i].ord_enc.ord_checksum = 0;
+		get_ord_packet_checksum(&(or_data[i].ord_enc), &(or_data[i].ord_enc.ord_checksum));
+
+		memcpy((packet + or_offset), &(or_data[i]), cipher_text_byte_offset);
+		memcpy((encrypt_buffer + or_offset), &(or_data[i]), sizeof(onion_route_data));
+		ret = aes_encrypt_block("[MAIN THREAD]", (encrypt_buffer + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset), 
+									ci_info->ri_pool[route_index].current_key_info.return_route_aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[i].iv), 
+										(packet + or_offset + cipher_text_byte_offset));
+		if(ret < 0) {
+			return -1;
+		}
+		ci_info->ri_pool[route_index].current_key_info.return_route_user_id = or_data[i].ord_enc.new_uid;
+		memcpy(ci_info->ri_pool[route_index].current_key_info.return_route_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		memcpy((encrypt_buffer + or_offset + cipher_text_byte_offset), (packet + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset));
+
+		previous_route_index = route_index;
+		or_offset -= sizeof(onion_route_data);
+	}
+
+	return 0;
+}
+
+int generate_onion_route_payload_from_route_info_using_rr_pairs(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */)
+{
+	int i, ret;
+	int route_index;
+	unsigned int or_offset;
+	onion_route_data or_data[MAX_ROUTE_LENGTH];
+	unsigned char encrypt_buffer[packet_size_bytes];
+
+	if((ci_info == NULL) || (r_info == NULL) || (packet == NULL) || (payload == NULL)) {
+		return -1;
+	}
+	if(r_info->route_length > MAX_ROUTE_LENGTH) {
+		return -1;
+	}
+
+	ret = fill_buf_with_random_data((unsigned char *)or_data, sizeof(or_data));
+	if(ret < 0) {
+		return -1;
+	}
+	ret = fill_buf_with_random_data((unsigned char *)encrypt_buffer, packet_size_bytes);
+	if(ret < 0) {
+		return -1;
+	}
+	memcpy((encrypt_buffer + payload_start_byte + (r_info->route_length * sizeof(onion_route_data))), payload, sizeof(payload_data));
+
+	or_offset = payload_start_byte + ((r_info->route_length - 1) * sizeof(onion_route_data));
+	for (i = (r_info->route_length - 1); i >= 0; i--) {
+		route_index = r_info->relay_route[i];
+		if((route_index < 0) || (route_index >= RELAY_POOL_MAX_SIZE)) {
+			return -1;
+		}
+		if(ci_info->ri_pool[route_index].is_active != 1) {
+			return -1;
+		}
+
+		generate_AES_key((unsigned char *)or_data[i].iv, AES_KEY_SIZE_BYTES);
+		or_data[i].uid = ci_info->ri_pool[route_index].current_key_info.return_route_payload_user_id;
+		generate_new_user_id(ci_info, route_index, &(or_data[i].ord_enc.new_uid));
+		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+
+		or_data[i].ord_enc.ord_checksum = 0;
+		get_ord_packet_checksum(&(or_data[i].ord_enc), &(or_data[i].ord_enc.ord_checksum));
+
+		memcpy((packet + or_offset), &(or_data[i]), cipher_text_byte_offset);
+		memcpy((encrypt_buffer + or_offset), &(or_data[i]), sizeof(onion_route_data));
+		ret = aes_encrypt_block("[MAIN THREAD]", (encrypt_buffer + or_offset + cipher_text_byte_offset), (packet_size_bytes - or_offset - cipher_text_byte_offset), 
+									ci_info->ri_pool[route_index].current_key_info.return_route_payload_aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[i].iv), 
+										(packet + or_offset + cipher_text_byte_offset));
+		if(ret < 0) {
+			return -1;
+		}
+		ci_info->ri_pool[route_index].current_key_info.return_route_payload_user_id = or_data[i].ord_enc.new_uid;
+		memcpy(ci_info->ri_pool[route_index].current_key_info.return_route_payload_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		memcpy((encrypt_buffer + or_offset + cipher_text_byte_offset), (packet + or_offset + cipher_text_byte_offset), (packet_size_bytes - or_offset - cipher_text_byte_offset));
+
+		or_offset -= sizeof(onion_route_data);
+	}
+
+	return 0;
+}
+
+int generate_onion_route_data_from_route_info_verify_using_rr_pairs(conversation_info *ci_info, route_info *r_info, unsigned char *packet)
+{
+	int i, ret;
+	int route_index, previous_route_index;
+	unsigned int or_offset;
+	onion_route_data or_data[MAX_ROUTE_LENGTH];
+	unsigned char encrypt_buffer[packet_size_bytes];
+
+	if((ci_info == NULL) || (r_info == NULL) || (packet == NULL)) {
+		return -1;
+	}
+	if(r_info->route_length > MAX_ROUTE_LENGTH) {
+		return -1;
+	}
+
+	ret = fill_buf_with_random_data((unsigned char *)or_data, sizeof(or_data));
+	if(ret < 0) {
+		return -1;
+	}
+
+	previous_route_index = -1;
+	or_offset = (r_info->route_length - 1) * sizeof(onion_route_data);
+	for (i = (r_info->route_length - 1); i >= 0; i--) {
+		route_index = r_info->relay_route[i];
+		if((route_index < 0) || (route_index >= RELAY_POOL_MAX_SIZE)) {
+			return -1;
+		}
+		if(ci_info->ri_pool[route_index].is_active != 1) {
+			return -1;
+		}
+
+		generate_AES_key((unsigned char *)or_data[i].iv, AES_KEY_SIZE_BYTES);
+		if(i != 0) {
+			or_data[i].uid = ci_info->ri_pool[route_index].current_key_info.return_route_user_id;
+		} else {
+			or_data[i].uid = ci_info->ri_pool[route_index].current_key_info.relay_user_id;
+		}
+		generate_new_user_id(ci_info, route_index, &(or_data[i].ord_enc.new_uid));
+		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		or_data[i].ord_enc.next_pkg_port = message_port;
+		if(previous_route_index < 0) {
+			or_data[i].ord_enc.next_pkg_ip = 0;
+		} else {
+			inet_aton(ci_info->ri_pool[previous_route_index].relay_ip, (struct in_addr *)&(or_data[i].ord_enc.next_pkg_ip));
+		}
+
+		or_data[i].ord_enc.ord_checksum = 0;
+		get_ord_packet_checksum(&(or_data[i].ord_enc), &(or_data[i].ord_enc.ord_checksum));
+
+		memcpy((packet + or_offset), &(or_data[i]), cipher_text_byte_offset);
+		memcpy((encrypt_buffer + or_offset), &(or_data[i]), sizeof(onion_route_data));
+		if(i != 0) {
+			ret = aes_encrypt_block("[MAIN THREAD]", (encrypt_buffer + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset), 
+										ci_info->ri_pool[route_index].current_key_info.return_route_aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[i].iv), 
+											(packet + or_offset + cipher_text_byte_offset));
+		} else {
+			ret = aes_encrypt_block("[MAIN THREAD]", (encrypt_buffer + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset), 
+										ci_info->ri_pool[route_index].current_key_info.aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[i].iv), 
+											(packet + or_offset + cipher_text_byte_offset));
+		}
+		
+		if(ret < 0) {
+			return -1;
+		}
+		if(i != 0) {
+			ci_info->ri_pool[route_index].current_key_info.return_route_user_id = or_data[i].ord_enc.new_uid;
+			memcpy(ci_info->ri_pool[route_index].current_key_info.return_route_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		} else {
+			ci_info->ri_pool[route_index].current_key_info.relay_user_id = or_data[i].ord_enc.new_uid;
+			memcpy(ci_info->ri_pool[route_index].current_key_info.aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		}		
+
+		memcpy((encrypt_buffer + or_offset + cipher_text_byte_offset), (packet + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset));
+
+		previous_route_index = route_index;
+		or_offset -= sizeof(onion_route_data);
+	}
+
+	return 0;
+}
+
+int generate_onion_route_payload_from_route_info_verify_using_rr_pairs(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */)
+{
+	int i, ret;
+	int route_index;
+	unsigned int or_offset;
+	onion_route_data or_data[MAX_ROUTE_LENGTH];
+	unsigned char encrypt_buffer[packet_size_bytes];
+
+	if((ci_info == NULL) || (r_info == NULL) || (packet == NULL) || (payload == NULL)) {
+		return -1;
+	}
+	if(r_info->route_length > MAX_ROUTE_LENGTH) {
+		return -1;
+	}
+
+	ret = fill_buf_with_random_data((unsigned char *)or_data, sizeof(or_data));
+	if(ret < 0) {
+		return -1;
+	}
+	ret = fill_buf_with_random_data((unsigned char *)encrypt_buffer, packet_size_bytes);
+	if(ret < 0) {
+		return -1;
+	}
+	memcpy((encrypt_buffer + payload_start_byte + (r_info->route_length * sizeof(onion_route_data))), payload, sizeof(payload_data));
+
+	or_offset = payload_start_byte + ((r_info->route_length - 1) * sizeof(onion_route_data));
+	for (i = (r_info->route_length - 1); i >= 0; i--) {
+		route_index = r_info->relay_route[i];
+		if((route_index < 0) || (route_index >= RELAY_POOL_MAX_SIZE)) {
+			return -1;
+		}
+		if(ci_info->ri_pool[route_index].is_active != 1) {
+			return -1;
+		}
+
+		generate_AES_key((unsigned char *)or_data[i].iv, AES_KEY_SIZE_BYTES);
+		if(i != 0) {
+			or_data[i].uid = ci_info->ri_pool[route_index].current_key_info.return_route_payload_user_id;
+		} else {
+			or_data[i].uid = ci_info->ri_pool[route_index].current_key_info.payload_relay_user_id;
+		}
+		
+		generate_new_user_id(ci_info, route_index, &(or_data[i].ord_enc.new_uid));
+		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+
+		or_data[i].ord_enc.ord_checksum = 0;
+		get_ord_packet_checksum(&(or_data[i].ord_enc), &(or_data[i].ord_enc.ord_checksum));
+
+		memcpy((packet + or_offset), &(or_data[i]), cipher_text_byte_offset);
+		memcpy((encrypt_buffer + or_offset), &(or_data[i]), sizeof(onion_route_data));
+		if(i != 0) {
+			ret = aes_encrypt_block("[MAIN THREAD]", (encrypt_buffer + or_offset + cipher_text_byte_offset), (packet_size_bytes - or_offset - cipher_text_byte_offset), 
+									ci_info->ri_pool[route_index].current_key_info.return_route_payload_aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[i].iv), 
+										(packet + or_offset + cipher_text_byte_offset));
+		} else {
+			ret = aes_encrypt_block("[MAIN THREAD]", (encrypt_buffer + or_offset + cipher_text_byte_offset), (packet_size_bytes - or_offset - cipher_text_byte_offset), 
+									ci_info->ri_pool[route_index].current_key_info.payload_aes_key, AES_KEY_SIZE_BYTES, (unsigned char *)&(or_data[i].iv), 
+										(packet + or_offset + cipher_text_byte_offset));
+		}
+		
+		if(ret < 0) {
+			return -1;
+		}
+		if(i != 0) {
+			ci_info->ri_pool[route_index].current_key_info.return_route_payload_user_id = or_data[i].ord_enc.new_uid;
+			memcpy(ci_info->ri_pool[route_index].current_key_info.return_route_payload_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);	
+		} else {
+			ci_info->ri_pool[route_index].current_key_info.payload_relay_user_id = or_data[i].ord_enc.new_uid;
+			memcpy(ci_info->ri_pool[route_index].current_key_info.payload_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		}
+		
 		memcpy((encrypt_buffer + or_offset + cipher_text_byte_offset), (packet + or_offset + cipher_text_byte_offset), (packet_size_bytes - or_offset - cipher_text_byte_offset));
 
 		or_offset -= sizeof(onion_route_data);
@@ -1992,10 +2893,9 @@ static int commit_key_info_to_history(conversation_info *ci_info)
 	return 0;
 }
 
-static int print_key_history(relay_info *r_info)
+__attribute__((unused)) static int print_key_history(relay_info *r_info)
 {
-	int curr_hist_index, hist_index;
-	int i;
+	int curr_hist_index, hist_index, i;
 	char buf[(AES_KEY_SIZE_BYTES*2)];
 
 	if(r_info == NULL) {
@@ -2031,6 +2931,62 @@ static int print_key_history(relay_info *r_info)
 	return 0;
 }
 
+__attribute__((unused)) static int print_return_key_history(relay_info *r_info)
+{
+	int curr_hist_index, hist_index, i;
+	char buf[(AES_KEY_SIZE_BYTES*2)];
+
+	if(r_info == NULL) {
+		return -1;
+	}
+
+	curr_hist_index = (r_info->kih_index + 1);
+	if (curr_hist_index >= PATH_HISTORY_LENGTH) {
+		curr_hist_index = 0;
+	}
+
+	hist_index = 0;
+	while(curr_hist_index != r_info->kih_index) {
+		if(r_info->key_info_history[curr_hist_index].relay_user_id != 0) {
+			fprintf(stdout, "Return Route Key History %d:\n", hist_index);
+			for (i = 0; i < AES_KEY_SIZE_BYTES; i++) {
+				sprintf((buf + (i*2)), "%02x", 0xff & r_info->key_info_history[curr_hist_index].return_route_aes_key[i]);
+			}
+			fprintf(stdout, "\tReturn Route Relay Key = %s\n", buf);
+			fprintf(stdout, "\tReturn Route Relay User ID = %d\n", r_info->key_info_history[curr_hist_index].return_route_user_id);
+
+			hist_index++;
+		}
+
+		curr_hist_index++;
+		if (curr_hist_index >= PATH_HISTORY_LENGTH) {
+			curr_hist_index = 0;
+		}
+	}
+
+	fprintf(stdout, "-----------------------------------------\n");
+
+	return 0;
+}
+
+int print_key_uid_pair(id_key_info *id_key_info_val)
+{
+	int i;
+
+	if(id_key_info_val == NULL) {
+		return -1;
+	}
+
+	fprintf(stdout, "UID: %d ", id_key_info_val->relay_user_id);
+	fprintf(stdout, "Key: ");
+	for (i = 0; i < AES_KEY_SIZE_BYTES; i++) {
+		fprintf(stdout, "%02x", 0xff & id_key_info_val->aes_key[i]);
+	}
+	fprintf(stdout, "\n");
+
+	return 0;
+}
+
 static int commit_route_info_to_history(packet_type type, conversation_info *c_info, route_info *r_info, route_info *return_r_info, void *arg)
 {
 	int i, j;
@@ -2061,6 +3017,8 @@ static int commit_route_info_to_history(packet_type type, conversation_info *c_i
 			rhistory.rh_index++;
 		break;
 		case DUMMY_PACKET:
+		case DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS:
+		case DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS_FOR_VERIFICATION:
 			if(r_info == NULL) {
 				return -1;
 			}
@@ -2090,7 +3048,7 @@ static int commit_route_info_to_history(packet_type type, conversation_info *c_i
 	return 0;
 }
 
-static int print_route_info_history(void)
+__attribute__((unused)) static int print_route_info_history(void)
 {
 	int i;
 	int hist_index, print_index;
@@ -2220,7 +3178,43 @@ int print_conversation(char *thread_id, conversation_info *ci_info)
 	return 0;
 }
 
-char* get_packet_type_str(packet_type type)
+int print_route_pairs(char *thread_id, route_pair *r_pair, int route_pair_length)
+{
+	int i, j;
+
+	if(r_pair == NULL) {
+		return -1;
+	}
+
+	for (i = 0; i < route_pair_length; ++i) {
+		if(r_pair[i].forward_route.route_length == 0) {
+			break;
+		}
+		fprintf(stdout, "%s Forward route (%d): ", thread_id, i);
+		for(j = 0; j < r_pair[i].forward_route.route_length; j++) {
+			fprintf(stdout, "%d ", r_pair[i].forward_route.relay_route[j]);
+			if(j >= MAX_ROUTE_LENGTH) {
+				break;
+			}
+		}
+		fprintf(stdout, "\n");
+		if(r_pair[i].return_route.route_length == 0) {
+			break;
+		}
+		fprintf(stdout, "%s Return route (%d): ", thread_id, i);
+		for(j = 0; j < r_pair[i].return_route.route_length; j++) {
+			fprintf(stdout, "%d ", r_pair[i].return_route.relay_route[j]);
+			if(j >= MAX_ROUTE_LENGTH) {
+				break;
+			}
+		}
+		fprintf(stdout, "\n");
+	}
+
+	return 0;
+}
+
+__attribute__((unused)) static char* get_packet_type_str(packet_type type)
 {
 	switch(type) {
 		case REGISTER_UIDS_WITH_ENTRY_RELAY:
@@ -2229,12 +3223,40 @@ char* get_packet_type_str(packet_type type)
 			return "REGISTER_UIDS_WITH_RELAY";
 		case DUMMY_PACKET:
 			return "DUMMY_PACKET";
+		case DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS:
+			return "DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS";
+		case DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS_FOR_VERIFICATION:
+			return "DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS_FOR_VERIFICATION";
 	}
 
 	return "UNKNOWN";
 }
 
-static char get_send_packet_char(void)
+__attribute__((unused)) static char* get_history_type_str(history_type h_type)
+{
+	switch(h_type) {
+		case DISABLE_HISTORY:
+			return "DISABLE_HISTORY";
+		case ENABLE_HISTORY:
+			return "ENABLE_HISTORY";
+	}
+
+	return "UNKNOWN";	
+}
+
+__attribute__((unused)) static char* get_verification_type_str(verification_type v_type)
+{
+	switch(v_type) {
+		case VERIFY_USING_FORWARD_KEY_UID_PAIR:
+			return "VERIFY_USING_FORWARD_KEY_UID_PAIR";
+		case VERIFY_USING_RETURN_KEY_UID_PAIR:
+			return "VERIFY_USING_RETURN_KEY_UID_PAIR";
+	}
+
+	return "UNKNOWN";	
+}
+
+__attribute__((unused)) static char get_send_packet_char(void)
 {
 	switch(curr_send_packet_char) {
 		case '-':
