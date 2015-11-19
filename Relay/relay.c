@@ -542,6 +542,8 @@ void *handle_msg_client_thread(void *ptr)
 		}
 		fprintf(stdout, "\n\n ------------------------------------------------------------ \n");
 	#endif
+
+	// TODO key storage semaphore?
 	
 	or_data_ptr = (onion_route_data *)packet_data_encrypted;
 	or_data_decrypted_ptr = (onion_route_data *)packet_data_decrypted;

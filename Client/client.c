@@ -69,6 +69,39 @@ static int print_route_info_history(void);
 static char* get_packet_type_str(packet_type type);
 static char* get_history_type_str(history_type h_type);
 static char* get_verification_type_str(verification_type v_type);
+static int place_packet_on_send_queue(unsigned char *packet, char *destination_ip, int destination_port);
+static int get_number_of_packets_in_send_queue(int *num_packets);
+static int get_friend_id(char *friend_id /* out */);
+static int init_chat(char *friend_name, conversation_info *ci_out /* out */);
+static int get_relay_public_certificates_debug(conversation_info *ci_info);
+static int set_entry_relay_for_conversation(conversation_info *ci_info);
+static int set_relay_keys_for_conversation(conversation_info *ci_info);
+static int set_user_ids_for_conversation(conversation_info *ci_info);
+static int perform_user_id_registration(conversation_info *ci_info);
+static int get_index_of_next_free_conversation(conversation_info *conversations);
+static int create_packet(packet_type type, conversation_info *ci_info, route_info *r_info, payload_data *payload, void *other, unsigned char *packet, char *destination_ip, int *destination_port);
+static int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destination_port);
+static int generate_new_user_id(conversation_info *ci_info, int relay_index, unsigned int *uid /* out */);
+static int is_valid_ip(char *ip, int *valid /* out */);
+static int print_conversation(char *thread_id, conversation_info *ci_info);
+static int send_dummy_packet_no_return_route(conversation_info *ci_info);
+static int send_dummy_packet_with_return_route(conversation_info *ci_info);
+static int send_dummy_packet_with_routes_defined(conversation_info *ci_info, route_info *r_info, route_info *return_r_info);
+static int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_info *r_info, unsigned char *packet);
+static int generate_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */);
+static int generate_return_onion_route_data_from_route_info(conversation_info *ci_info, route_info *return_r_info, unsigned char *packet);
+static int generate_return_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *return_r_info, unsigned char *packet);
+static int generate_onion_route_data_from_route_info_using_rr_pairs(conversation_info *ci_info, route_info *r_info, unsigned char *packet);
+static int generate_onion_route_payload_from_route_info_using_rr_pairs(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */);
+static int generate_onion_route_data_from_route_info_verify_using_rr_pairs(conversation_info *ci_info, route_info *r_info, unsigned char *packet);
+static int generate_onion_route_payload_from_route_info_verify_using_rr_pairs(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */);
+static int generate_packet_metadata(conversation_info *ci_info, payload_type p_type, route_info *return_r_info, payload_data *payload);
+static int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info, payload_data *payload, void *other);
+static int print_key_uid_pair(id_key_info *id_key_info_val);
+static int print_rr_key_uid_pair(id_key_info *id_key_info_val);
+static int print_route_pairs(char *thread_id, route_pair *r_pair, int route_pair_length);
+void logging_interrupt_handler(int dummy);
+int save_uid_history_to_file(void);
 
 int main(int argc, char const *argv[])
 {
@@ -85,6 +118,10 @@ int main(int argc, char const *argv[])
 		return -3;
 	}
 
+	#ifdef ENABLE_LOGGING
+		signal(SIGINT, logging_interrupt_handler);
+	#endif
+
 	ret = init_self_ip("[MAIN THREAD]");
 	if(ret < 0) {
 		return -4;
@@ -95,7 +132,7 @@ int main(int argc, char const *argv[])
 	}
 	ret = init_receive_packet_thread(&receive_packet_thread);
 	if(ret < 0) {
-		return -6;	
+		return -6;
 	}
 
 	free_convo_index = get_index_of_next_free_conversation(conversations);
@@ -452,7 +489,7 @@ void *send_packet_handler(void *ptr)
 	}
 }
 
-int get_number_of_packets_in_send_queue(int *num_packets)
+static int get_number_of_packets_in_send_queue(int *num_packets)
 {
 	send_packet_node *sp_node_tmp;
 
@@ -470,7 +507,7 @@ int get_number_of_packets_in_send_queue(int *num_packets)
 	return 0;
 }
 
-int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destination_port)
+static int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destination_port)
 {
 	int i, ret, bytes_sent;
 	int source_port, cr_socket;
@@ -532,7 +569,7 @@ int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destin
 	return 0;
 }
 
-int init_chat(char *friend_name, conversation_info *ci_out /* out */)
+static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 {
 	int ret, all_relays_online;
 	//int convo_valid;
@@ -570,6 +607,7 @@ int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 		ci_out->ri_pool[1].is_active = 1;
 		ci_out->ri_pool[2].is_active = 1;
 		ci_out->ri_pool[3].is_active = 1;
+		ci_out->conversation_valid = 1;
 
 		ret = get_relay_public_certificates_debug(ci_out);
 		if(ret < 0) {
@@ -611,11 +649,19 @@ int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 		return -1;
 	}
 
-	ret = verify_all_relays_online_rapid("[MAIN THREAD]", ci_out, &all_relays_online);
-	if(ret < 0) {
-		return -1;
-	}
+	while(1) {
+		ret = verify_all_relays_online_rapid("[MAIN THREAD]", ci_out, &all_relays_online);
+		if(ret < 0) {
+			return -1;
+		}
 
+		if(all_relays_online == 0) {
+			attempt_to_reconnect_unresponsive_relays_via_key_history("[MAIN THREAD]", ci_out);
+		}
+
+		sleep(2);
+	}
+	
 /*
 	while(1) {
 
@@ -637,7 +683,7 @@ int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 	return ret;
 }
 
-int get_index_of_next_free_conversation(conversation_info *conversations)
+static int get_index_of_next_free_conversation(conversation_info *conversations)
 {
 	int i;
 
@@ -650,7 +696,7 @@ int get_index_of_next_free_conversation(conversation_info *conversations)
 	return -1;
 }
 
-int get_relay_public_certificates_debug(conversation_info *ci_info)
+static int get_relay_public_certificates_debug(conversation_info *ci_info)
 {
 	int i, j, ret;
 	unsigned int source_port, initial_seed_value;
@@ -787,7 +833,7 @@ int get_relay_public_certificates_debug(conversation_info *ci_info)
 	return 0;
 }
 
-int set_entry_relay_for_conversation(conversation_info *ci_info)
+static int set_entry_relay_for_conversation(conversation_info *ci_info)
 {
 	int i;
 	unsigned int initial_seed_value, num_relays;
@@ -839,7 +885,7 @@ int set_entry_relay_for_conversation(conversation_info *ci_info)
 	return 0;
 }
 
-int set_relay_keys_for_conversation(conversation_info *ci_info)
+static int set_relay_keys_for_conversation(conversation_info *ci_info)
 {
 	int ret, i;
 
@@ -875,7 +921,7 @@ int set_relay_keys_for_conversation(conversation_info *ci_info)
 	return 0;
 }
 
-int set_user_ids_for_conversation(conversation_info *ci_info)
+static int set_user_ids_for_conversation(conversation_info *ci_info)
 {
 	int i;
 
@@ -899,7 +945,7 @@ int set_user_ids_for_conversation(conversation_info *ci_info)
 	return 0;
 }
 
-int generate_new_user_id(conversation_info *ci_info, int relay_index, unsigned int *uid /* out */)
+static int generate_new_user_id(conversation_info *ci_info, int relay_index, unsigned int *uid /* out */)
 {
 	int i;
 	unsigned int initial_seed_value;
@@ -934,7 +980,7 @@ int generate_new_user_id(conversation_info *ci_info, int relay_index, unsigned i
 	return 0;
 }
 
-int perform_user_id_registration(conversation_info *ci_info)
+static int perform_user_id_registration(conversation_info *ci_info)
 {
 	int ret, i;
 	unsigned int seed_val, relay_register_index;
@@ -986,7 +1032,7 @@ int perform_user_id_registration(conversation_info *ci_info)
 	return 0;
 }
 
-int generate_random_route(conversation_info *ci_info, route_info *r_info)
+static int generate_random_route(conversation_info *ci_info, route_info *r_info)
 {
 	int num_routed;
 	unsigned int seed_val, index;
@@ -1020,7 +1066,7 @@ int generate_random_route(conversation_info *ci_info, route_info *r_info)
 	return 0;
 }
 
-int generate_random_return_route(conversation_info *ci_info, route_info *r_info, route_info *return_r_info)
+static int generate_random_return_route(conversation_info *ci_info, route_info *r_info, route_info *return_r_info)
 {
 	int i;
 	unsigned int seed_val, index;
@@ -1055,7 +1101,7 @@ int generate_random_return_route(conversation_info *ci_info, route_info *r_info,
 	return 0;
 }
 
-int generate_payload_metadata_for_entry_relay(char *thread_id, char* ip_addr, payload_data *payload)
+static int generate_payload_metadata_for_entry_relay(char *thread_id, char* ip_addr, payload_data *payload)
 {
 	uint64_t ip_first_return_relay;
 
@@ -1160,125 +1206,134 @@ static int wait_for_command_completion(int max_command_time, int *command_ret_st
 
 static int reconnect_to_entry_relay_via_key_history(char *thread_id, conversation_info *ci_info, int *reconnect_success)
 {
-	int ret, reconnect_attempts, hist_index_forward_key_pair, hist_index_reverse_key_pair;
+	int j, ret, reconnect_attempts, hist_index_forward_key_pair, hist_index_reverse_key_pair;
 	id_key_info id_key_info_tmp;
 
 	if((ci_info == NULL) || (reconnect_success == NULL)) {
 		return -1;
 	}
+	*reconnect_success = 0;
 
-	ret = verify_entry_relay_online("[MAIN THREAD]", ci_info, ENABLE_HISTORY, VERIFY_USING_FORWARD_KEY_UID_PAIR, reconnect_success);
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "Attempting1 to connect to entry relay (%s) with UID: %d and KEY: ", ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.relay_user_id);
+		for (j = 0; j < AES_KEY_SIZE_BYTES; ++j) {
+			fprintf(stdout, "%02x", 0xff & ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.aes_key[j]);
+		}
+		fprintf(stdout, "\n");
+	#endif
+
+	ret = verify_entry_relay_online("[MAIN THREAD]", ci_info, DISABLE_HISTORY, VERIFY_USING_FORWARD_KEY_UID_PAIR, reconnect_success);
 	if(ret < 0) {
 		return -1;
 	}
 	if(*reconnect_success == 0) {
 		// Attempt reconnect with current key
-		ret = verify_entry_relay_online("[MAIN THREAD]", ci_info, DISABLE_HISTORY, VERIFY_USING_FORWARD_KEY_UID_PAIR, reconnect_success);
-		if(ret < 0) {
-			return -1;
+		reconnect_attempts = 0;
+		if(ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index >= PATH_HISTORY_LENGTH) {
+			ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index = 0;
 		}
-		if(*reconnect_success == 0) {
-			reconnect_attempts = 0;
-			if(ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index >= PATH_HISTORY_LENGTH) {
-				ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index = 0;
-			}
-			hist_index_forward_key_pair = ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index - 1;
-			if(hist_index_forward_key_pair < 0) {
-				hist_index_forward_key_pair = PATH_HISTORY_LENGTH - 1;
-			}
-			memset(&id_key_info_tmp, 0, sizeof(id_key_info));
+		hist_index_forward_key_pair = ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index - 1;
+		memcpy(&id_key_info_tmp, &(ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info), (sizeof(id_key_info) / 2));
+		while(1) {
 			while(1) {
-				while(1) {
-//					print_key_history(&(ci_info->ri_pool[ci_info->index_of_entry_relay]));
-//					print_key_uid_pair(&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_forward_key_pair]));
-//					fprintf(stdout, "hist_index_forward_key_pair: %d\n", hist_index_forward_key_pair);
-
-					ret = memcmp(&id_key_info_tmp, &(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_forward_key_pair]), (sizeof(id_key_info) / 2));
-					if(ret != 0) {
-						break;
-					}
-					hist_index_forward_key_pair--;
-					if(hist_index_forward_key_pair < 0) {
-						hist_index_forward_key_pair = PATH_HISTORY_LENGTH - 1;
-					}
-					if(hist_index_forward_key_pair == ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index) {
-						return 0;
-					}
-					if(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_forward_key_pair].relay_user_id == 0) {
-						return 0;
-					}
-				}
-				memcpy(&id_key_info_tmp, &(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_forward_key_pair]), (sizeof(id_key_info)/2));			
-				memcpy(&(ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info), 
-							&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_forward_key_pair]), (sizeof(id_key_info)/2));
-				ret = verify_entry_relay_online("[MAIN THREAD]", ci_info, DISABLE_HISTORY, VERIFY_USING_FORWARD_KEY_UID_PAIR, reconnect_success);
-				if(ret < 0) {
-					return -1;
-				}
-				if(*reconnect_success) {
+				ret = memcmp(&id_key_info_tmp, &(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_forward_key_pair]), (sizeof(id_key_info) / 2));
+				if(ret != 0) {
 					break;
 				}
-				if(++reconnect_attempts > MAX_UID_HISTORY_RECONNECT_ATTEMPTS) {
+				hist_index_forward_key_pair--;
+				if(hist_index_forward_key_pair < 0) {
+					hist_index_forward_key_pair = PATH_HISTORY_LENGTH - 1;
+				}
+				if(hist_index_forward_key_pair == ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index) {
 					return 0;
 				}
+				if(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_forward_key_pair].relay_user_id == 0) {
+					return 0;
+				}
+			}
+			memcpy(&id_key_info_tmp, &(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_forward_key_pair]), (sizeof(id_key_info)/2));			
+			memcpy(&(ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info), 
+						&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_forward_key_pair]), (sizeof(id_key_info)/2));
+
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "Attempting to connect to entry relay (%s) with UID: %d and KEY: ", ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.relay_user_id);
+				for (j = 0; j < AES_KEY_SIZE_BYTES; ++j) {
+					fprintf(stdout, "%02x", 0xff & ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.aes_key[j]);
+				}
+				fprintf(stdout, "\n");
+			#endif
+
+			ret = verify_entry_relay_online("[MAIN THREAD]", ci_info, DISABLE_HISTORY, VERIFY_USING_FORWARD_KEY_UID_PAIR, reconnect_success);
+			if(ret < 0) {
+				return -1;
+			}
+			if(*reconnect_success) {
+				break;
+			}
+			if(++reconnect_attempts > MAX_UID_HISTORY_RECONNECT_ATTEMPTS) {
+				return 0;
 			}
 		}
 	}
 
-	ret = verify_entry_relay_online("[MAIN THREAD]", ci_info, ENABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, reconnect_success);
+	#ifdef ENABLE_LOGGING
+		fprintf(stdout, "Attempting1 to connect to entry relay (%s) with UID: %d and KEY: ", ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.return_route_user_id);
+		for (j = 0; j < AES_KEY_SIZE_BYTES; ++j) {
+			fprintf(stdout, "%02x", 0xff & ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.return_route_aes_key[j]);
+		}
+		fprintf(stdout, "\n");
+	#endif
+
+	ret = verify_entry_relay_online("[MAIN THREAD]", ci_info, DISABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, reconnect_success);
 	if(ret < 0) {
 		return -1;
 	}
 	if(*reconnect_success == 0) {
 		// Attempt reconnect with current key
-		ret = verify_entry_relay_online("[MAIN THREAD]", ci_info, DISABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, reconnect_success);
-		if(ret < 0) {
-			return -1;
+		reconnect_attempts = 0;
+		if(ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index >= PATH_HISTORY_LENGTH) {
+			ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index = 0;
 		}
-		if(*reconnect_success == 0) {
-			reconnect_attempts = 0;
-			if(ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index >= PATH_HISTORY_LENGTH) {
-				ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index = 0;
-			}
-			hist_index_reverse_key_pair = ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index - 1;
-			if(hist_index_reverse_key_pair < 0) {
-				hist_index_reverse_key_pair = PATH_HISTORY_LENGTH - 1;
-			}
-			memset(&id_key_info_tmp, 0, sizeof(id_key_info));
+		hist_index_reverse_key_pair = ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index - 1;
+		memcpy(&id_key_info_tmp, ((char *)&(ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info)) + (sizeof(id_key_info) / 2), sizeof(id_key_info));
+		while(1) {
 			while(1) {
-				while(1) {
-//					print_return_key_history(&(ci_info->ri_pool[ci_info->index_of_entry_relay]));
-//					print_key_uid_pair(&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_reverse_key_pair]) + (sizeof(id_key_info) / 2));
-//					fprintf(stdout, "hist_index_reverse_key_pair: %d\n", hist_index_reverse_key_pair);
-
-					ret = memcmp(&id_key_info_tmp, (&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_reverse_key_pair]) + (sizeof(id_key_info) / 2)), (sizeof(id_key_info) / 2));
-					if(ret != 0) {
-						break;
-					}
-					hist_index_reverse_key_pair--;
-					if(hist_index_reverse_key_pair < 0) {
-						hist_index_reverse_key_pair = PATH_HISTORY_LENGTH - 1;
-					}
-					if(hist_index_reverse_key_pair == ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index) {
-						return 0;
-					}
-					if(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_reverse_key_pair].relay_user_id == 0) {
-						return 0;
-					}
-				}
-				memcpy(&id_key_info_tmp, (&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_reverse_key_pair]) + (sizeof(id_key_info) / 2)), (sizeof(id_key_info)/2));			
-				memcpy((&(ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info) + (sizeof(id_key_info) / 2)), 
-							(&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_reverse_key_pair]) + (sizeof(id_key_info) / 2)), (sizeof(id_key_info)/2));
-				ret = verify_entry_relay_online("[MAIN THREAD]", ci_info, DISABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, reconnect_success);
-				if(ret < 0) {
-					return -1;
-				}
-				if(*reconnect_success) {
+				ret = memcmp(&id_key_info_tmp, ((char *)&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_reverse_key_pair])) + (sizeof(id_key_info) / 2), (sizeof(id_key_info) / 2));
+				if(ret != 0) {
 					break;
 				}
-				if(++reconnect_attempts > MAX_UID_HISTORY_RECONNECT_ATTEMPTS) {
+				hist_index_reverse_key_pair--;
+				if(hist_index_reverse_key_pair < 0) {
+					hist_index_reverse_key_pair = PATH_HISTORY_LENGTH - 1;
+				}
+				if(hist_index_reverse_key_pair == ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index) {
 					return 0;
 				}
+				if(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_reverse_key_pair].relay_user_id == 0) {
+					return 0;
+				}
+			}
+			memcpy(&id_key_info_tmp, ((char *)&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_reverse_key_pair])) + (sizeof(id_key_info) / 2), (sizeof(id_key_info)/2));
+			memcpy(((char *)&(ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info) + (sizeof(id_key_info) / 2)), 
+						((char *)&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_reverse_key_pair]) + (sizeof(id_key_info) / 2)), (sizeof(id_key_info)/2));
+
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "Attempting to connect to entry relay (%s) with UID: %d and KEY: ", ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.return_route_user_id);
+				for (j = 0; j < AES_KEY_SIZE_BYTES; ++j) {
+					fprintf(stdout, "%02x", 0xff & ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.return_route_aes_key[j]);
+				}
+				fprintf(stdout, "\n");
+			#endif
+
+			ret = verify_entry_relay_online("[MAIN THREAD]", ci_info, DISABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, reconnect_success);
+			if(ret < 0) {
+				return -1;
+			}
+			if(*reconnect_success) {
+				break;
+			}
+			if(++reconnect_attempts > MAX_UID_HISTORY_RECONNECT_ATTEMPTS) {
+				return 0;
 			}
 		}
 	}
@@ -1289,6 +1344,7 @@ static int reconnect_to_entry_relay_via_key_history(char *thread_id, conversatio
 		#endif
 
 		ci_info->ri_pool[ci_info->index_of_entry_relay].is_responsive = 1;
+		commit_key_info_to_history(ci_info);
 	} else {
 		#ifdef ENABLE_LOGGING
 			fprintf(stdout, "%s Failed to reconnect to entry relay (ip = %s)\n", thread_id, ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip);
@@ -1300,7 +1356,7 @@ static int reconnect_to_entry_relay_via_key_history(char *thread_id, conversatio
 
 static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread_id, conversation_info *ci_info)
 {
-	int i, ret, relay_is_online, forward_hist_index, reverse_hist_index;
+	int i, j, ret, relay_is_online, forward_hist_index, reverse_hist_index;
 	int reconnect_attempts, entry_relay_online;
 	id_key_info id_key_info_tmp;
 
@@ -1309,7 +1365,26 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 	}
 
 	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
-		if((ci_info->ri_pool[i].is_active == 1) && (ci_info->ri_pool[i].is_responsive == 0)) {			
+		if(i == ci_info->index_of_entry_relay) {
+			continue;
+		}
+		if((ci_info->ri_pool[i].is_active == 1) && (ci_info->ri_pool[i].is_responsive == 0)) {
+			ret = reconnect_to_entry_relay_via_key_history(thread_id, ci_info, &entry_relay_online);
+			if(ret < 0) {
+				return -1;
+			}
+			if(entry_relay_online == 0) {
+				return 0;
+			}
+
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "Attempting2 to connect to relay (%d, %s) with UID: %d and KEY: ", i, ci_info->ri_pool[i].relay_ip, ci_info->ri_pool[i].current_key_info.relay_user_id);
+				for (j = 0; j < AES_KEY_SIZE_BYTES; ++j) {
+					fprintf(stdout, "%02x", 0xff & ci_info->ri_pool[i].current_key_info.aes_key[j]);
+				}
+				fprintf(stdout, "\n");
+			#endif
+
 			ret = verify_relay_online("[MAIN THREAD]", ci_info, i, DISABLE_HISTORY, VERIFY_USING_FORWARD_KEY_UID_PAIR, &relay_is_online);
 			if(ret < 0) {
 				return -1;
@@ -1320,10 +1395,7 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 					ci_info->ri_pool[i].kih_index = 0;
 				}
 				forward_hist_index = ci_info->ri_pool[i].kih_index - 1;
-				if(forward_hist_index < 0) {
-					forward_hist_index = PATH_HISTORY_LENGTH - 1;
-				}
-				memset(&id_key_info_tmp, 0, sizeof(id_key_info_tmp));
+				memcpy(&id_key_info_tmp, &(ci_info->ri_pool[i].current_key_info), (sizeof(id_key_info_tmp) / 2));
 				while(1) {
 					ret = reconnect_to_entry_relay_via_key_history(thread_id, ci_info, &entry_relay_online);
 					if(ret < 0) {
@@ -1351,9 +1423,18 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 					if(ci_info->ri_pool[i].key_info_history[forward_hist_index].relay_user_id == 0) {
 						break;
 					}
-					
+
 					memcpy(&id_key_info_tmp, &(ci_info->ri_pool[i].key_info_history[forward_hist_index]), (sizeof(id_key_info)/2));
 					memcpy(&(ci_info->ri_pool[i].current_key_info), &(ci_info->ri_pool[i].key_info_history[forward_hist_index]), (sizeof(id_key_info)/2));
+
+					#ifdef ENABLE_LOGGING
+						fprintf(stdout, "Attempting to connect to relay (%d, %s) with UID: %d and KEY: ", i, ci_info->ri_pool[i].relay_ip, ci_info->ri_pool[i].current_key_info.relay_user_id);
+						for (j = 0; j < AES_KEY_SIZE_BYTES; ++j) {
+							fprintf(stdout, "%02x", 0xff & ci_info->ri_pool[i].current_key_info.aes_key[j]);
+						}
+						fprintf(stdout, "\n");
+					#endif
+
 					ret = verify_relay_online("[MAIN THREAD]", ci_info, i, DISABLE_HISTORY, VERIFY_USING_FORWARD_KEY_UID_PAIR, &relay_is_online);
 					if(ret < 0) {
 						return -1;
@@ -1367,6 +1448,13 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 				}
 			}
 
+			ret = reconnect_to_entry_relay_via_key_history(thread_id, ci_info, &entry_relay_online);
+			if(ret < 0) {
+				return -1;
+			}
+			if(entry_relay_online == 0) {
+				return 0;
+			}
 			ret = verify_relay_online("[MAIN THREAD]", ci_info, i, DISABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, &relay_is_online);
 			if(ret < 0) {
 				return -1;
@@ -1377,10 +1465,7 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 					ci_info->ri_pool[i].kih_index = 0;
 				}
 				reverse_hist_index = ci_info->ri_pool[i].kih_index - 1;
-				if(reverse_hist_index < 0) {
-					reverse_hist_index = PATH_HISTORY_LENGTH - 1;
-				}
-				memset(&id_key_info_tmp, 0, sizeof(id_key_info_tmp));
+				memcpy(&id_key_info_tmp, ((char *)&(ci_info->ri_pool[i].current_key_info)) + (sizeof(id_key_info_tmp) / 2), (sizeof(id_key_info_tmp) / 2));
 				while(1) {
 					ret = reconnect_to_entry_relay_via_key_history(thread_id, ci_info, &entry_relay_online);
 					if(ret < 0) {
@@ -1390,7 +1475,7 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 						return 0;
 					}
 					while(1) {
-						ret = memcmp(&id_key_info_tmp, (&(ci_info->ri_pool[i].key_info_history[reverse_hist_index]) + (sizeof(id_key_info)/2)), (sizeof(id_key_info)/2));
+						ret = memcmp(&id_key_info_tmp, ((char *)&(ci_info->ri_pool[i].key_info_history[reverse_hist_index])) + (sizeof(id_key_info)/2), (sizeof(id_key_info)/2));
 						if(ret != 0) {
 							break;
 						}
@@ -1409,8 +1494,18 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 						break;
 					}
 					
-					memcpy(&id_key_info_tmp, (&(ci_info->ri_pool[i].key_info_history[reverse_hist_index]) + (sizeof(id_key_info)/2)), (sizeof(id_key_info)/2));
-					memcpy((&(ci_info->ri_pool[i].current_key_info) + (sizeof(id_key_info)/2)), (&(ci_info->ri_pool[i].key_info_history[reverse_hist_index]) + (sizeof(id_key_info)/2)), (sizeof(id_key_info)/2));
+					memcpy(&id_key_info_tmp, ((char *)&(ci_info->ri_pool[i].key_info_history[reverse_hist_index])) + (sizeof(id_key_info)/2), (sizeof(id_key_info)/2));
+					memcpy(((char *)&(ci_info->ri_pool[i].current_key_info)) + (sizeof(id_key_info)/2), 
+							((char *)&(ci_info->ri_pool[i].key_info_history[reverse_hist_index])) + (sizeof(id_key_info)/2), (sizeof(id_key_info)/2));
+
+					#ifdef ENABLE_LOGGING
+						fprintf(stdout, "Attempting to connect to relay (%d, %s) with UID: %d and KEY: ", i, ci_info->ri_pool[i].relay_ip, ci_info->ri_pool[i].current_key_info.return_route_user_id);
+						for (j = 0; j < AES_KEY_SIZE_BYTES; ++j) {
+							fprintf(stdout, "%02x", 0xff & ci_info->ri_pool[i].current_key_info.return_route_aes_key[j]);
+						}
+						fprintf(stdout, "\n");
+					#endif
+
 					ret = verify_relay_online("[MAIN THREAD]", ci_info, i, DISABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, &relay_is_online);
 					if(ret < 0) {
 						return -1;
@@ -1430,6 +1525,7 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 				#endif
 
 				ci_info->ri_pool[i].is_responsive = 1;
+				commit_key_info_to_history(ci_info);
 			} else {
 				#ifdef ENABLE_LOGGING
 					fprintf(stdout, "%s Failed to reconnect relay with index: %d and ip = %s\n", thread_id, i, ci_info->ri_pool[i].relay_ip);
@@ -1881,7 +1977,7 @@ static int verify_relay_online(char *thread_id, conversation_info *ci_info, int 
 	return 0;
 }
 
-int send_dummy_packet_no_return_route(conversation_info *ci_info)
+static int send_dummy_packet_no_return_route(conversation_info *ci_info)
 {
 	int ret;
 	route_info r_info;
@@ -1923,7 +2019,7 @@ int send_dummy_packet_no_return_route(conversation_info *ci_info)
 	return 0;
 }
 
-int send_dummy_packet_with_return_route(conversation_info *ci_info)
+static int send_dummy_packet_with_return_route(conversation_info *ci_info)
 {
 	int ret;
 	route_info r_info, return_r_info;
@@ -1985,7 +2081,7 @@ int send_dummy_packet_with_return_route(conversation_info *ci_info)
 	return 0;
 }
 
-int send_dummy_packet_with_routes_defined(conversation_info *ci_info, route_info *r_info, route_info *return_r_info)
+static int send_dummy_packet_with_routes_defined(conversation_info *ci_info, route_info *r_info, route_info *return_r_info)
 {
 	int ret;
 	payload_data dummy_packet_payload;
@@ -2022,7 +2118,7 @@ int send_dummy_packet_with_routes_defined(conversation_info *ci_info, route_info
 	return 0;
 }
 
-int generate_packet_metadata(conversation_info *ci_info, payload_type p_type, route_info *return_r_info, payload_data *payload)
+static int generate_packet_metadata(conversation_info *ci_info, payload_type p_type, route_info *return_r_info, payload_data *payload)
 {
 	uint64_t ip_first_return_relay;
 
@@ -2061,7 +2157,7 @@ int generate_packet_metadata(conversation_info *ci_info, payload_type p_type, ro
 	return 0;
 }
 
-int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info, payload_data *payload, void *other)
+static int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info, payload_data *payload, void *other)
 {
 	int ret;
 	unsigned char packet_buf[packet_size_bytes];
@@ -2089,7 +2185,7 @@ int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info
 	return 0;
 }
 
-int create_packet(packet_type type, conversation_info *ci_info, route_info *r_info, payload_data *payload, void *other, unsigned char *packet, char *destination_ip, int *destination_port)
+static int create_packet(packet_type type, conversation_info *ci_info, route_info *r_info, payload_data *payload, void *other, unsigned char *packet, char *destination_ip, int *destination_port)
 {
 	int ret, first_relay_index;
 	id_cache_data ic_data;
@@ -2294,7 +2390,7 @@ int create_packet(packet_type type, conversation_info *ci_info, route_info *r_in
 	return 0;
 }
 
-int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_info *r_info, unsigned char *packet)
+static int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_info *r_info, unsigned char *packet)
 {
 	int i, ret;
 	int route_index, previous_route_index;
@@ -2357,7 +2453,7 @@ int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_
 	return 0;
 }
 
-int generate_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */)
+static int generate_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */)
 {
 	int i, ret;
 	int route_index;
@@ -2417,7 +2513,7 @@ int generate_onion_route_payload_from_route_info(conversation_info *ci_info, rou
 	return 0;
 }
 
-int generate_onion_route_data_from_route_info_using_rr_pairs(conversation_info *ci_info, route_info *r_info, unsigned char *packet)
+static int generate_onion_route_data_from_route_info_using_rr_pairs(conversation_info *ci_info, route_info *r_info, unsigned char *packet)
 {
 	int i, ret;
 	int route_index, previous_route_index;
@@ -2481,7 +2577,7 @@ int generate_onion_route_data_from_route_info_using_rr_pairs(conversation_info *
 	return 0;
 }
 
-int generate_onion_route_payload_from_route_info_using_rr_pairs(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */)
+static int generate_onion_route_payload_from_route_info_using_rr_pairs(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */)
 {
 	int i, ret;
 	int route_index;
@@ -2542,7 +2638,7 @@ int generate_onion_route_payload_from_route_info_using_rr_pairs(conversation_inf
 	return 0;
 }
 
-int generate_onion_route_data_from_route_info_verify_using_rr_pairs(conversation_info *ci_info, route_info *r_info, unsigned char *packet)
+static int generate_onion_route_data_from_route_info_verify_using_rr_pairs(conversation_info *ci_info, route_info *r_info, unsigned char *packet)
 {
 	int i, ret;
 	int route_index, previous_route_index;
@@ -2623,7 +2719,7 @@ int generate_onion_route_data_from_route_info_verify_using_rr_pairs(conversation
 	return 0;
 }
 
-int generate_onion_route_payload_from_route_info_verify_using_rr_pairs(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */)
+static int generate_onion_route_payload_from_route_info_verify_using_rr_pairs(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */)
 {
 	int i, ret;
 	int route_index;
@@ -2702,7 +2798,7 @@ int generate_onion_route_payload_from_route_info_verify_using_rr_pairs(conversat
 	return 0;
 }
 
-int generate_return_onion_route_data_from_route_info(conversation_info *ci_info, route_info *return_r_info, unsigned char *packet)
+static int generate_return_onion_route_data_from_route_info(conversation_info *ci_info, route_info *return_r_info, unsigned char *packet)
 {
 	int i, ret;
 	int route_index, previous_route_index;
@@ -2766,7 +2862,7 @@ int generate_return_onion_route_data_from_route_info(conversation_info *ci_info,
 	return 0;
 }
 
-int generate_return_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *return_r_info, unsigned char *packet)
+static int generate_return_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *return_r_info, unsigned char *packet)
 {
 	int i, ret;
 	int route_index;
@@ -2824,7 +2920,7 @@ int generate_return_onion_route_payload_from_route_info(conversation_info *ci_in
 	return 0;
 }
 
-int place_packet_on_send_queue(unsigned char *packet, char *destination_ip, int destination_port)
+static int place_packet_on_send_queue(unsigned char *packet, char *destination_ip, int destination_port)
 {
 	send_packet_node *sp, *sp_tmp;
 
@@ -2871,7 +2967,11 @@ static int commit_current_key_info_to_history(relay_info *r_info)
 		r_info->kih_index = 0;
 	}
 	memcpy((r_info->key_info_history + r_info->kih_index), &(r_info->current_key_info), sizeof(id_key_info));
+
 	++(r_info->kih_index);
+	if(r_info->kih_index >= PATH_HISTORY_LENGTH) {
+		r_info->kih_index = 0;
+	}
 
 	return 0;
 }
@@ -2969,7 +3069,7 @@ __attribute__((unused)) static int print_return_key_history(relay_info *r_info)
 	return 0;
 }
 
-int print_key_uid_pair(id_key_info *id_key_info_val)
+static int print_key_uid_pair(id_key_info *id_key_info_val)
 {
 	int i;
 
@@ -2981,6 +3081,24 @@ int print_key_uid_pair(id_key_info *id_key_info_val)
 	fprintf(stdout, "Key: ");
 	for (i = 0; i < AES_KEY_SIZE_BYTES; i++) {
 		fprintf(stdout, "%02x", 0xff & id_key_info_val->aes_key[i]);
+	}
+	fprintf(stdout, "\n");
+
+	return 0;
+}
+
+static int print_rr_key_uid_pair(id_key_info *id_key_info_val)
+{
+	int i;
+
+	if(id_key_info_val == NULL) {
+		return -1;
+	}
+
+	fprintf(stdout, "UID: %d ", id_key_info_val->return_route_user_id);
+	fprintf(stdout, "Key: ");
+	for (i = 0; i < AES_KEY_SIZE_BYTES; i++) {
+		fprintf(stdout, "%02x", 0xff & id_key_info_val->return_route_aes_key[i]);
 	}
 	fprintf(stdout, "\n");
 
@@ -3080,7 +3198,7 @@ __attribute__((unused)) static int print_route_info_history(void)
 	return 0;
 }
 
-int get_friend_id(char *friend_id)
+static int get_friend_id(char *friend_id)
 {
 	int i;
 	char c;
@@ -3108,7 +3226,7 @@ int get_friend_id(char *friend_id)
 	return 0;
 }
 
-int is_valid_ip(char *ip, int *valid /* out */)
+static int is_valid_ip(char *ip, int *valid /* out */)
 {
 	int result;
 	struct sockaddr_in sa;
@@ -3127,7 +3245,7 @@ int is_valid_ip(char *ip, int *valid /* out */)
     return -1;
 }
 
-int print_conversation(char *thread_id, conversation_info *ci_info)
+static int print_conversation(char *thread_id, conversation_info *ci_info)
 {
 	int i, j;
 	char buf[(AES_KEY_SIZE_BYTES*2)];
@@ -3178,7 +3296,7 @@ int print_conversation(char *thread_id, conversation_info *ci_info)
 	return 0;
 }
 
-int print_route_pairs(char *thread_id, route_pair *r_pair, int route_pair_length)
+static int print_route_pairs(char *thread_id, route_pair *r_pair, int route_pair_length)
 {
 	int i, j;
 
@@ -3279,7 +3397,7 @@ __attribute__((unused)) static char get_send_packet_char(void)
 	return curr_send_packet_char;
 }
 
-void print_ret_code(char *thread_id, int ret)
+static void print_ret_code(char *thread_id, int ret)
 {
 	#ifdef ENABLE_LOGGING
 		{
@@ -3288,7 +3406,7 @@ void print_ret_code(char *thread_id, int ret)
 	#endif
 }
 
-void handle_pthread_ret(char *thread_id, int ret, int clientfd)
+static void handle_pthread_ret(char *thread_id, int ret, int clientfd)
 {
 	char *pthread_ret;
 
@@ -3300,4 +3418,45 @@ void handle_pthread_ret(char *thread_id, int ret, int clientfd)
 		pthread_ret = (char *)0;
 		pthread_exit(pthread_ret);
 	}
+}
+
+void logging_interrupt_handler(int dummy) 
+{
+	save_uid_history_to_file();
+
+	exit(0); 
+}
+
+int save_uid_history_to_file(void) 
+{
+	int i, j, k;
+	FILE *fp;
+
+	fp = fopen("uid_history.txt", "w");
+	if(fp == NULL) {
+		return -1;
+	}
+
+	for(i = 0; i < MAX_CONVERSATIONS; i++) {
+		if(conversations[i].conversation_valid == 1) {
+			fprintf(fp, "-------------- CONVERSATION %d --------------\n", i);
+			for(j = 0; j < RELAY_POOL_MAX_SIZE; ++j) {
+				if(conversations[i].ri_pool[j].is_active == 0) {
+					continue;
+				}
+				if(j == conversations[i].index_of_entry_relay) {
+					fprintf(fp, "-----> Entry relay: %d, ip: %s\n", j, conversations[i].ri_pool[j].relay_ip);
+				} else {
+					fprintf(fp, "-----> Relay %d, ip: %s\n", j, conversations[i].ri_pool[j].relay_ip);
+				}
+				fprintf(fp, "\t\tCurrent Forward UID: %d, Reverse UID: %d\n", conversations[i].ri_pool[j].current_key_info.relay_user_id, conversations[i].ri_pool[j].current_key_info.return_route_user_id);
+				for (k = 0; k < PATH_HISTORY_LENGTH; ++k) {
+					fprintf(fp, "\t\tForward UID: %d, Reverse UID: %d\n", conversations[i].ri_pool[j].key_info_history[k].relay_user_id, conversations[i].ri_pool[j].key_info_history[k].return_route_user_id);
+				}
+			}	
+		}
+	}
+	fclose(fp);
+
+	return 0;
 }

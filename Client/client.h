@@ -18,6 +18,7 @@
 #include <openssl/rand.h>
 #include <openssl/rsa.h>
 #include <openssl/pem.h>
+#include <signal.h>
 
 #include "../Shared/key_storage.h"
 #include "../Shared/cryptography.h"
@@ -47,8 +48,8 @@ char *program_name = "Client";
 #define MAX_CONVERSATIONS						(32)
 #define RELAY_IP_MAX_LENGTH						(16)
 #define RELAY_ID_LEN 							((SHA256_DIGEST_LENGTH * 2) + 1)
-#define PATH_HISTORY_LENGTH						(10)
-#define MAX_UID_HISTORY_RECONNECT_ATTEMPTS 		(2)
+#define PATH_HISTORY_LENGTH						(20)
+#define MAX_UID_HISTORY_RECONNECT_ATTEMPTS 		(3)
 
 #define MSG_PORT_PROTOCOL						("TCP")
 
@@ -183,36 +184,5 @@ typedef struct thread_comm
 	command_attempts curr_attempts;
 	uint8_t command_data[THREAD_COMMAND_DATA_SIZE];
 } thread_comm;
-
-int place_packet_on_send_queue(unsigned char *packet, char *destination_ip, int destination_port);
-int get_number_of_packets_in_send_queue(int *num_packets);
-int get_friend_id(char *friend_id /* out */);
-int init_chat(char *friend_name, conversation_info *ci_out /* out */);
-int get_relay_public_certificates_debug(conversation_info *ci_info);
-int set_entry_relay_for_conversation(conversation_info *ci_info);
-int set_relay_keys_for_conversation(conversation_info *ci_info);
-int set_user_ids_for_conversation(conversation_info *ci_info);
-int perform_user_id_registration(conversation_info *ci_info);
-int get_index_of_next_free_conversation(conversation_info *conversations);
-int create_packet(packet_type type, conversation_info *ci_info, route_info *r_info, payload_data *payload, void *other, unsigned char *packet, char *destination_ip, int *destination_port);
-int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destination_port);
-int generate_new_user_id(conversation_info *ci_info, int relay_index, unsigned int *uid /* out */);
-int is_valid_ip(char *ip, int *valid /* out */);
-int print_conversation(char *thread_id, conversation_info *ci_info);
-int send_dummy_packet_no_return_route(conversation_info *ci_info);
-int send_dummy_packet_with_return_route(conversation_info *ci_info);
-int send_dummy_packet_with_routes_defined(conversation_info *ci_info, route_info *r_info, route_info *return_r_info);
-int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_info *r_info, unsigned char *packet);
-int generate_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */);
-int generate_return_onion_route_data_from_route_info(conversation_info *ci_info, route_info *return_r_info, unsigned char *packet);
-int generate_return_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *return_r_info, unsigned char *packet);
-int generate_onion_route_data_from_route_info_using_rr_pairs(conversation_info *ci_info, route_info *r_info, unsigned char *packet);
-int generate_onion_route_payload_from_route_info_using_rr_pairs(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */);
-int generate_onion_route_data_from_route_info_verify_using_rr_pairs(conversation_info *ci_info, route_info *r_info, unsigned char *packet);
-int generate_onion_route_payload_from_route_info_verify_using_rr_pairs(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */);
-int generate_packet_metadata(conversation_info *ci_info, payload_type p_type, route_info *return_r_info, payload_data *payload);
-int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info, payload_data *payload, void *other);
-int print_key_uid_pair(id_key_info *id_key_info_val);
-int print_route_pairs(char *thread_id, route_pair *r_pair, int route_pair_length);
 
 #endif
