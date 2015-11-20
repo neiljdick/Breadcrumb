@@ -37,7 +37,7 @@ char *program_name = "Client";
 #define MAX_READ_ATTEMPTS 						(5)
 #define LISTEN_BACKLOG_MAX 						(5)
 
-#define PACKET_TRANSMISSION_DELAY				(3)
+#define PACKET_TRANSMISSION_DELAY				(1)
 #define MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER 	(3)
 
 #define PUBLIC_KEY_CERT_SIZE					(426)
@@ -55,8 +55,8 @@ char *program_name = "Client";
 
 #define THREAD_COMMAND_DATA_SIZE 				(512)
 #define THREAD_RETURN_PACKET_CONFIRM_SIZE		(64)
-#define MAX_CHECK_NODE_TIME_SEC					(6)
-#define MAX_VERIFY_ROUTE_TIME_SEC				(6)
+#define MAX_CHECK_NODE_TIME_SEC					(2)
+#define MAX_VERIFY_ROUTE_TIME_SEC				(5)
 
 const char *public_cert_dir = ".relay_certs";
 
@@ -74,9 +74,19 @@ typedef enum {
 } history_type;
 
 typedef enum {
+	SOFT_RECONNECT = 0,
+	HARD_RECONNECT
+} reconnect_type;
+
+typedef enum {
 	VERIFY_USING_FORWARD_KEY_UID_PAIR = 0,
 	VERIFY_USING_RETURN_KEY_UID_PAIR
 } verification_type;
+
+typedef enum {
+	USE_PREVIOUS_RETURN_KEY = 0,
+	APPLY_RETURN_KEY_HISTORY,
+} return_key_history_type;
 
 typedef struct relay_indexer_info
 {

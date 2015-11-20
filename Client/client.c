@@ -1,8 +1,9 @@
 #include "client.h"
 
 #define ENABLE_LOGGING
+//#define ENABLE_RECEIVE_PACKET_LOGGING
+//#define ENABLE_KEY_HISTORY_LOGGING
 #define DEBUG_MODE
-#define ENABLE_RECEIVE_PACKET_LOGGING
 //#define LAN_NETWORKING_MODE
 //#define PRINT_PACKETS
 //#define UID_CLASH_ENABLE
@@ -56,9 +57,10 @@ static int verify_all_relays_online_rapid(char *thread_id, conversation_info *ci
 static int verify_all_relays_online_basic(char *thread_id, conversation_info *ci_info, int *all_relays_online);
 static int generate_rapid_verification_routes(char *thread_id, conversation_info *ci_info, route_pair *r_pair, int route_pair_length);
 static int update_non_entry_relay_connectivity_status(char *thread_id, conversation_info *ci_info);
-static int reconnect_to_entry_relay_via_key_history(char *thread_id, conversation_info *ci_info, int *reconnect_success);
-static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread_id, conversation_info *ci_info);
-static int attempt_to_reconnect_unresponsive_relays_via_reregister_id(char *thread_id, conversation_info *ci_info);
+static int reconnect_to_entry_relay_via_key_history(char *thread_id, conversation_info *ci_info, return_key_history_type rkh_type, int *reconnect_success);
+static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread_id, conversation_info *ci_info, int *reconnected_to_all_relays);
+static int attempt_to_reconnect_unresponsive_relays_via_reregister_id(char *thread_id, conversation_info *ci_info, int *reconnected_to_all_relays);
+static int perform_relay_verification_and_reconnection(char *thread_id, conversation_info *ci_info, reconnect_type rc_type, int *success);
 static char get_send_packet_char(void);
 static int commit_current_key_info_to_history(relay_info *r_info);
 static int commit_key_info_to_history(conversation_info *ci_info);
@@ -571,7 +573,7 @@ static int send_packet_to_relay(unsigned char *packet, char *destination_ip, int
 
 static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 {
-	int ret, all_relays_online;
+	int ret, verification_successful;
 	//int convo_valid;
 
 	if((friend_name == NULL) || (ci_out == NULL)) {
@@ -620,6 +622,8 @@ static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 	 *  Check no two nodes have IP address within same subnet (lower 10 bits or something)
 	 *  Check no two nodes have same public cert
 	 *  Check no two nodes have same id
+	 *  Server relay is online
+	 *  Entry relay is online
 	 */ 
 	//check_validity_of_conversation(&convo_valid);
 
@@ -650,32 +654,10 @@ static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 	}
 
 	while(1) {
-		ret = verify_all_relays_online_rapid("[MAIN THREAD]", ci_out, &all_relays_online);
-		if(ret < 0) {
-			return -1;
-		}
-
-		if(all_relays_online == 0) {
-			attempt_to_reconnect_unresponsive_relays_via_key_history("[MAIN THREAD]", ci_out);
-		}
-
+		perform_relay_verification_and_reconnection("[MAIN THREAD]", ci_out, HARD_RECONNECT, &verification_successful);
 		sleep(2);
 	}
-	
-/*
-	while(1) {
 
-		ret = verify_all_relays_online_basic("[MAIN THREAD]", ci_out, &all_relays_online);
-		if(ret < 0) {
-			return -1;
-		}
-		if(all_relays_online == 0) {
-			attempt_to_reconnect_unresponsive_relays_via_key_history("[MAIN THREAD]", ci_out);
-		}
-
-		sleep(3);
-	}
-*/
 	#ifndef ENABLE_LOGGING
 		fprintf(stdout, "done\n");
 	#endif
@@ -1013,8 +995,6 @@ static int perform_user_id_registration(conversation_info *ci_info)
 		relay_register_index %= RELAY_POOL_MAX_SIZE;
 		if((ci_info->ri_pool[relay_register_index].is_active == 1) && (relay_register_index != ci_info->index_of_entry_relay)) {
 			if(index_of_relays_registered[relay_register_index] == 0) {
-				commit_key_info_to_history(ci_info);
-				commit_route_info_to_history(REGISTER_UIDS_WITH_RELAY, ci_info, NULL, NULL, &relay_register_index);
 				ret = send_packet(REGISTER_UIDS_WITH_RELAY, ci_info, NULL,  NULL, &relay_register_index);
 				if(ret < 0) {
 					return -1;
@@ -1028,6 +1008,8 @@ static int perform_user_id_registration(conversation_info *ci_info)
 			break;
 		}
 	}
+	commit_key_info_to_history(ci_info);
+	commit_route_info_to_history(REGISTER_UIDS_WITH_RELAY, ci_info, NULL, NULL, &relay_register_index);
 
 	return 0;
 }
@@ -1204,9 +1186,68 @@ static int wait_for_command_completion(int max_command_time, int *command_ret_st
 	return 0;
 }
 
-static int reconnect_to_entry_relay_via_key_history(char *thread_id, conversation_info *ci_info, int *reconnect_success)
+static int perform_relay_verification_and_reconnection(char *thread_id, conversation_info *ci_info, reconnect_type rc_type, int *success)
 {
-	int j, ret, reconnect_attempts, hist_index_forward_key_pair, hist_index_reverse_key_pair;
+	int all_relays_online, all_relays_reconnected;
+	int ret;
+
+	if((ci_info == NULL) || (success == NULL)) {
+		return -1;
+	}
+
+	*success = 0;
+	ret = verify_all_relays_online_rapid(thread_id, ci_info, &all_relays_online);
+	if(ret < 0) {
+		return -1;
+	}
+	if(all_relays_online) {
+		*success = 1;
+		return 0;
+	}
+
+	ret = attempt_to_reconnect_unresponsive_relays_via_key_history(thread_id, ci_info, &all_relays_reconnected);
+	if(ret < 0) {
+		return -1;
+	}
+	if(all_relays_reconnected) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Successfully reconnected all relays\n", thread_id);
+		#endif
+
+		*success = 1;
+		return 0;
+	}
+	if(rc_type == SOFT_RECONNECT) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Failed reconnected all relays - not attempting to reregister as in 'SOFT_RECONNECT' mode\n", thread_id);
+		#endif
+
+		*success = 0;
+		return 0;
+	}
+
+	ret = attempt_to_reconnect_unresponsive_relays_via_reregister_id(thread_id, ci_info, &all_relays_reconnected);
+	if(ret < 0) {
+		return -1;
+	}
+	if(all_relays_reconnected) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Successfully reconnected all relays ('HARD_RECONNECT' mode)\n", thread_id);
+		#endif
+
+		*success = 1;
+	} else {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "%s Failed to reconnect all relays ('HARD_RECONNECT' mode)\n", thread_id);
+		#endif
+	}
+
+	return 0;
+}
+
+static int reconnect_to_entry_relay_via_key_history(char *thread_id, conversation_info *ci_info, return_key_history_type rkh_type, int *reconnect_success)
+{
+	int ret, reconnect_attempts, hist_index_forward_key_pair, hist_index_reverse_key_pair;
 	id_key_info id_key_info_tmp;
 
 	if((ci_info == NULL) || (reconnect_success == NULL)) {
@@ -1214,8 +1255,9 @@ static int reconnect_to_entry_relay_via_key_history(char *thread_id, conversatio
 	}
 	*reconnect_success = 0;
 
-	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "Attempting1 to connect to entry relay (%s) with UID: %d and KEY: ", ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.relay_user_id);
+	#ifdef ENABLE_KEY_HISTORY_LOGGING
+		int j;
+		fprintf(stdout, "First Attempt to connect to entry relay (forward key) (%s) with UID: %d and KEY: ", ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.relay_user_id);
 		for (j = 0; j < AES_KEY_SIZE_BYTES; ++j) {
 			fprintf(stdout, "%02x", 0xff & ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.aes_key[j]);
 		}
@@ -1255,7 +1297,7 @@ static int reconnect_to_entry_relay_via_key_history(char *thread_id, conversatio
 			memcpy(&(ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info), 
 						&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_forward_key_pair]), (sizeof(id_key_info)/2));
 
-			#ifdef ENABLE_LOGGING
+			#ifdef ENABLE_KEY_HISTORY_LOGGING
 				fprintf(stdout, "Attempting to connect to entry relay (%s) with UID: %d and KEY: ", ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.relay_user_id);
 				for (j = 0; j < AES_KEY_SIZE_BYTES; ++j) {
 					fprintf(stdout, "%02x", 0xff & ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.aes_key[j]);
@@ -1276,13 +1318,18 @@ static int reconnect_to_entry_relay_via_key_history(char *thread_id, conversatio
 		}
 	}
 
-	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "Attempting1 to connect to entry relay (%s) with UID: %d and KEY: ", ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.return_route_user_id);
+	#ifdef ENABLE_KEY_HISTORY_LOGGING
+		fprintf(stdout, "First Attempt to connect to entry relay (return key) (%s) with UID: %d and KEY: ", ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.return_route_user_id);
 		for (j = 0; j < AES_KEY_SIZE_BYTES; ++j) {
 			fprintf(stdout, "%02x", 0xff & ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.return_route_aes_key[j]);
 		}
 		fprintf(stdout, "\n");
 	#endif
+
+	if(rkh_type == USE_PREVIOUS_RETURN_KEY) {
+		memcpy(((char *)&(ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info)) + (sizeof(id_key_info) / 2),  
+					((char *)&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index - 1])) + (sizeof(id_key_info) / 2), (sizeof(id_key_info) / 2));
+	}
 
 	ret = verify_entry_relay_online("[MAIN THREAD]", ci_info, DISABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, reconnect_success);
 	if(ret < 0) {
@@ -1295,7 +1342,7 @@ static int reconnect_to_entry_relay_via_key_history(char *thread_id, conversatio
 			ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index = 0;
 		}
 		hist_index_reverse_key_pair = ci_info->ri_pool[ci_info->index_of_entry_relay].kih_index - 1;
-		memcpy(&id_key_info_tmp, ((char *)&(ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info)) + (sizeof(id_key_info) / 2), sizeof(id_key_info));
+		memcpy(&id_key_info_tmp, ((char *)&(ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info)) + (sizeof(id_key_info) / 2), (sizeof(id_key_info) / 2));
 		while(1) {
 			while(1) {
 				ret = memcmp(&id_key_info_tmp, ((char *)&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_reverse_key_pair])) + (sizeof(id_key_info) / 2), (sizeof(id_key_info) / 2));
@@ -1317,7 +1364,7 @@ static int reconnect_to_entry_relay_via_key_history(char *thread_id, conversatio
 			memcpy(((char *)&(ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info) + (sizeof(id_key_info) / 2)), 
 						((char *)&(ci_info->ri_pool[ci_info->index_of_entry_relay].key_info_history[hist_index_reverse_key_pair]) + (sizeof(id_key_info) / 2)), (sizeof(id_key_info)/2));
 
-			#ifdef ENABLE_LOGGING
+			#ifdef ENABLE_KEY_HISTORY_LOGGING
 				fprintf(stdout, "Attempting to connect to entry relay (%s) with UID: %d and KEY: ", ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.return_route_user_id);
 				for (j = 0; j < AES_KEY_SIZE_BYTES; ++j) {
 					fprintf(stdout, "%02x", 0xff & ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.return_route_aes_key[j]);
@@ -1349,36 +1396,42 @@ static int reconnect_to_entry_relay_via_key_history(char *thread_id, conversatio
 		#ifdef ENABLE_LOGGING
 			fprintf(stdout, "%s Failed to reconnect to entry relay (ip = %s)\n", thread_id, ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip);
 		#endif
+
+		ci_info->ri_pool[ci_info->index_of_entry_relay].is_responsive = 0;
 	}
 
 	return 0;
 }
 
-static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread_id, conversation_info *ci_info)
+static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread_id, conversation_info *ci_info, int *reconnected_to_all_relays)
 {
-	int i, j, ret, relay_is_online, forward_hist_index, reverse_hist_index;
+	int i, ret, relay_is_online, forward_hist_index, reverse_hist_index;
 	int reconnect_attempts, entry_relay_online;
 	id_key_info id_key_info_tmp;
 
-	if(ci_info == NULL) {
+	if((ci_info == NULL) || (reconnected_to_all_relays == NULL)) {
 		return -1;
 	}
 
+	*reconnected_to_all_relays = 1;
 	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
 		if(i == ci_info->index_of_entry_relay) {
 			continue;
 		}
 		if((ci_info->ri_pool[i].is_active == 1) && (ci_info->ri_pool[i].is_responsive == 0)) {
-			ret = reconnect_to_entry_relay_via_key_history(thread_id, ci_info, &entry_relay_online);
-			if(ret < 0) {
-				return -1;
-			}
-			if(entry_relay_online == 0) {
-				return 0;
+			if((i == 0) || (ci_info->ri_pool[i-1].is_responsive == 0)) {
+				ret = reconnect_to_entry_relay_via_key_history(thread_id, ci_info, APPLY_RETURN_KEY_HISTORY, &entry_relay_online);
+				if(ret < 0) {
+					return -1;
+				}
+				if(entry_relay_online == 0) {
+					return 0;
+				}
 			}
 
-			#ifdef ENABLE_LOGGING
-				fprintf(stdout, "Attempting2 to connect to relay (%d, %s) with UID: %d and KEY: ", i, ci_info->ri_pool[i].relay_ip, ci_info->ri_pool[i].current_key_info.relay_user_id);
+			#ifdef ENABLE_KEY_HISTORY_LOGGING
+				int j;
+				fprintf(stdout, "First Attempt to connect to relay (%d, %s) with UID: %d and KEY: ", i, ci_info->ri_pool[i].relay_ip, ci_info->ri_pool[i].current_key_info.relay_user_id);
 				for (j = 0; j < AES_KEY_SIZE_BYTES; ++j) {
 					fprintf(stdout, "%02x", 0xff & ci_info->ri_pool[i].current_key_info.aes_key[j]);
 				}
@@ -1397,7 +1450,7 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 				forward_hist_index = ci_info->ri_pool[i].kih_index - 1;
 				memcpy(&id_key_info_tmp, &(ci_info->ri_pool[i].current_key_info), (sizeof(id_key_info_tmp) / 2));
 				while(1) {
-					ret = reconnect_to_entry_relay_via_key_history(thread_id, ci_info, &entry_relay_online);
+					ret = reconnect_to_entry_relay_via_key_history(thread_id, ci_info, APPLY_RETURN_KEY_HISTORY, &entry_relay_online);
 					if(ret < 0) {
 						return -1;
 					}
@@ -1427,7 +1480,7 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 					memcpy(&id_key_info_tmp, &(ci_info->ri_pool[i].key_info_history[forward_hist_index]), (sizeof(id_key_info)/2));
 					memcpy(&(ci_info->ri_pool[i].current_key_info), &(ci_info->ri_pool[i].key_info_history[forward_hist_index]), (sizeof(id_key_info)/2));
 
-					#ifdef ENABLE_LOGGING
+					#ifdef ENABLE_KEY_HISTORY_LOGGING
 						fprintf(stdout, "Attempting to connect to relay (%d, %s) with UID: %d and KEY: ", i, ci_info->ri_pool[i].relay_ip, ci_info->ri_pool[i].current_key_info.relay_user_id);
 						for (j = 0; j < AES_KEY_SIZE_BYTES; ++j) {
 							fprintf(stdout, "%02x", 0xff & ci_info->ri_pool[i].current_key_info.aes_key[j]);
@@ -1447,14 +1500,10 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 					}
 				}
 			}
+			if(relay_is_online) {
+				commit_key_info_to_history(ci_info);
+			}
 
-			ret = reconnect_to_entry_relay_via_key_history(thread_id, ci_info, &entry_relay_online);
-			if(ret < 0) {
-				return -1;
-			}
-			if(entry_relay_online == 0) {
-				return 0;
-			}
 			ret = verify_relay_online("[MAIN THREAD]", ci_info, i, DISABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, &relay_is_online);
 			if(ret < 0) {
 				return -1;
@@ -1467,7 +1516,7 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 				reverse_hist_index = ci_info->ri_pool[i].kih_index - 1;
 				memcpy(&id_key_info_tmp, ((char *)&(ci_info->ri_pool[i].current_key_info)) + (sizeof(id_key_info_tmp) / 2), (sizeof(id_key_info_tmp) / 2));
 				while(1) {
-					ret = reconnect_to_entry_relay_via_key_history(thread_id, ci_info, &entry_relay_online);
+					ret = reconnect_to_entry_relay_via_key_history(thread_id, ci_info, USE_PREVIOUS_RETURN_KEY, &entry_relay_online);
 					if(ret < 0) {
 						return -1;
 					}
@@ -1498,7 +1547,7 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 					memcpy(((char *)&(ci_info->ri_pool[i].current_key_info)) + (sizeof(id_key_info)/2), 
 							((char *)&(ci_info->ri_pool[i].key_info_history[reverse_hist_index])) + (sizeof(id_key_info)/2), (sizeof(id_key_info)/2));
 
-					#ifdef ENABLE_LOGGING
+					#ifdef ENABLE_KEY_HISTORY_LOGGING
 						fprintf(stdout, "Attempting to connect to relay (%d, %s) with UID: %d and KEY: ", i, ci_info->ri_pool[i].relay_ip, ci_info->ri_pool[i].current_key_info.return_route_user_id);
 						for (j = 0; j < AES_KEY_SIZE_BYTES; ++j) {
 							fprintf(stdout, "%02x", 0xff & ci_info->ri_pool[i].current_key_info.return_route_aes_key[j]);
@@ -1530,6 +1579,9 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 				#ifdef ENABLE_LOGGING
 					fprintf(stdout, "%s Failed to reconnect relay with index: %d and ip = %s\n", thread_id, i, ci_info->ri_pool[i].relay_ip);
 				#endif
+
+				*reconnected_to_all_relays = 0;
+				ci_info->ri_pool[i].is_responsive = 0;
 			}
 		}
 	}
@@ -1537,10 +1589,34 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 	return 0;
 }
 
-static int attempt_to_reconnect_unresponsive_relays_via_reregister_id(char *thread_id, conversation_info *ci_info)
+static int attempt_to_reconnect_unresponsive_relays_via_reregister_id(char *thread_id, conversation_info *ci_info, int *reconnected_to_all_relays)
 {
-	if(ci_info == NULL) {
+	int i, ret;
+
+	if((ci_info == NULL) || (reconnected_to_all_relays == NULL)) {
 		return -1;
+	}
+
+	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
+		if((ci_info->ri_pool[i].is_active == 1) && (ci_info->ri_pool[i].is_responsive == 0)) {
+			ret = send_packet(REGISTER_UIDS_WITH_RELAY, ci_info, NULL,  NULL, &i);
+			if(ret < 0) {
+				return -1;
+			}
+			ci_info->ri_pool[i].is_responsive = 1;
+		}
+	}
+
+	ret = update_non_entry_relay_connectivity_status(thread_id, ci_info);
+	if(ret < 0) {
+		return -1;
+	}
+
+	*reconnected_to_all_relays = 1;
+	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
+		if((ci_info->ri_pool[i].is_active == 1) && (ci_info->ri_pool[i].is_responsive == 0)) {
+			*reconnected_to_all_relays = 0;
+		}
 	}
 
 	return 0;
@@ -1709,7 +1785,7 @@ static int verify_all_relays_online_rapid(char *thread_id, conversation_info *ci
 	return 0;
 }
 
-static int verify_all_relays_online_basic(char *thread_id, conversation_info *ci_info, int *all_relays_online)
+__attribute__((unused)) static int verify_all_relays_online_basic(char *thread_id, conversation_info *ci_info, int *all_relays_online)
 {
 	int i, ret;
 
@@ -1803,7 +1879,7 @@ static int update_non_entry_relay_connectivity_status(char *thread_id, conversat
 				}
 				if(ci_info->ri_pool[index].is_responsive == 0) {
 					ci_info->ri_pool[index].is_responsive = 0;
-					ret = reconnect_to_entry_relay_via_key_history(thread_id, ci_info, &entry_relay_online);
+					ret = reconnect_to_entry_relay_via_key_history(thread_id, ci_info, APPLY_RETURN_KEY_HISTORY, &entry_relay_online);
 					if(ret < 0) {
 						return -1;
 					}
@@ -3069,7 +3145,7 @@ __attribute__((unused)) static int print_return_key_history(relay_info *r_info)
 	return 0;
 }
 
-static int print_key_uid_pair(id_key_info *id_key_info_val)
+__attribute__((unused)) static int print_key_uid_pair(id_key_info *id_key_info_val)
 {
 	int i;
 
@@ -3087,7 +3163,7 @@ static int print_key_uid_pair(id_key_info *id_key_info_val)
 	return 0;
 }
 
-static int print_rr_key_uid_pair(id_key_info *id_key_info_val)
+__attribute__((unused)) static int print_rr_key_uid_pair(id_key_info *id_key_info_val)
 {
 	int i;
 
@@ -3226,7 +3302,7 @@ static int get_friend_id(char *friend_id)
 	return 0;
 }
 
-static int is_valid_ip(char *ip, int *valid /* out */)
+__attribute__((unused)) static int is_valid_ip(char *ip, int *valid /* out */)
 {
 	int result;
 	struct sockaddr_in sa;
