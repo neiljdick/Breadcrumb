@@ -329,11 +329,11 @@ int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
 		return -1;
 	}
 
-	g_user_id = user_id;
 	if(curr_ks_clash_addr != NULL) {
 		munmap(curr_ks_clash_addr, sizeof(key_entry) + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
 		curr_ks_clash_addr = NULL;
 	}
+	g_user_id = user_id;
 
 	ke_ptr = (key_store + g_user_id);
 	if((ke_ptr->age < 0) || (ke_ptr->age >= MAX_KEY_ENTRY_AGE)) {
@@ -404,7 +404,6 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 	if((ke_out == NULL) || (key_store == NULL)) {
 		return -1;
 	}
-
 	if(user_id > max_user_id) {
 		#ifdef ENABLE_LOGGING
 			fprintf(stdout, "%s Failed to get key, user ID (%u) must be less than key storage size (%u)\n", thread_id, user_id, max_user_id);
@@ -419,12 +418,12 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "%s Attempting to get key for UID (%u)..", thread_id, user_id);
 	#endif
-
-	g_user_id = user_id;
+	
 	if(curr_ks_clash_addr != NULL) {
 		munmap(curr_ks_clash_addr, sizeof(key_entry) + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
 		curr_ks_clash_addr = NULL;
 	}
+	g_user_id = user_id;
 
 	if(backup_index < 0) {
 		ke_ptr = (key_store + g_user_id);
@@ -484,11 +483,11 @@ int remove_key_from_key_store(char *thread_id, unsigned int user_id, int backup_
 		return -1;
 	}
 
-	g_user_id = user_id;
 	if(curr_ks_clash_addr != NULL) {
 		munmap(curr_ks_clash_addr, sizeof(key_entry) + ((off_t)g_user_id * sizeof(key_entry)) - pa_offset);
 		curr_ks_clash_addr = NULL;
 	}
+	g_user_id = user_id;
 
 	if(backup_index < 0) {
 		ke_ptr = (key_store + user_id);
@@ -723,6 +722,7 @@ int main(int argc, char const *argv[])
 {
 	int ret;
 	key debug_key;
+	key_entry debug_ke_entry;
 
 	fprintf(stdout, "[DEBUG MODE] Begin\n");
 	fprintf(stdout, "[DEBUG MODE] Size of key entry: %lu\n", sizeof(key_entry));
@@ -757,14 +757,16 @@ int main(int argc, char const *argv[])
 	memset(debug_key.value, 0x39, AES_KEY_SIZE_BYTES);
 	set_key_for_user_id("[DEBUG MODE]", 22049, &debug_key);
 
-	get_key_for_user_id("[DEBUG MODE]", 22045, -1, &debug_key);
-	get_key_for_user_id("[DEBUG MODE]", 22045, 0, &debug_key);
+	get_key_for_user_id("[DEBUG MODE]", 22045, -1, &debug_ke_entry);
+	get_key_for_user_id("[DEBUG MODE]", 22045, 0, &debug_ke_entry);
 
-	get_key_for_user_id("[DEBUG MODE]", 22046, -1, &debug_key);
-	get_key_for_user_id("[DEBUG MODE]", 22046, 0, &debug_key);
+	get_key_for_user_id("[DEBUG MODE]", 22046, -1, &debug_ke_entry);
+	get_key_for_user_id("[DEBUG MODE]", 22046, 0, &debug_ke_entry);
 	swap_current_mapping_to_ram("[DEBUG MODE]");
-	get_key_for_user_id("[DEBUG MODE]", 22046, -1, &debug_key);
-	get_key_for_user_id("[DEBUG MODE]", 22046, 0, &debug_key);
+	get_key_for_user_id("[DEBUG MODE]", 22046, -1, &debug_ke_entry);
+	get_key_for_user_id("[DEBUG MODE]", 22046, 0, &debug_ke_entry);
+
+	get_key_for_user_id("[DEBUG MODE]", 22222, -1, &debug_ke_entry);
 
 	while(1) sleep(10);
 	

@@ -542,6 +542,8 @@ void *handle_msg_client_thread(void *ptr)
 		}
 		fprintf(stdout, "\n\n ------------------------------------------------------------ \n");
 	#endif
+
+	// TODO key storage semaphore?
 	
 	or_data_ptr = (onion_route_data *)packet_data_encrypted;
 	or_data_decrypted_ptr = (onion_route_data *)packet_data_decrypted;
@@ -552,6 +554,7 @@ void *handle_msg_client_thread(void *ptr)
 		if(ke_entry.age < 0) {
 			continue;
 		}
+		// TODO - If succeeded and i != -1 need to swap current mapping to RAM
 
 		ret = aes_decrypt_block(thread_id_buf, (unsigned char *)&(or_data_ptr->ord_enc), (payload_start_byte - cipher_text_byte_offset), 
 									(unsigned char *)ke_entry.p_key.value, AES_KEY_SIZE_BYTES, or_data_ptr->iv, (packet_data_decrypted + cipher_text_byte_offset));
