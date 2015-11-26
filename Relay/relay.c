@@ -543,7 +543,7 @@ void *handle_msg_client_thread(void *ptr)
 		fprintf(stdout, "\n\n ------------------------------------------------------------ \n");
 	#endif
 
-	// TODO key storage semaphore?
+	sem_wait(&keystore_sem);
 	
 	or_data_ptr = (onion_route_data *)packet_data_encrypted;
 	or_data_decrypted_ptr = (onion_route_data *)packet_data_decrypted;
@@ -599,6 +599,8 @@ void *handle_msg_client_thread(void *ptr)
 	remove_currently_mapped_key_from_key_store(thread_id_buf);
 	ret = set_key_for_user_id(thread_id_buf, or_payload_data_decrypted_ptr->ord_enc.new_uid, (key *)&(or_payload_data_decrypted_ptr->ord_enc.new_key));
 	handle_pthread_ret(thread_id_buf, ret, client_socket);
+	
+	sem_post(&keystore_sem);
 	
 	ret = fill_buf_with_random_data(packet_data, packet_size_bytes);
 	handle_pthread_ret(thread_id_buf, ret, client_socket);

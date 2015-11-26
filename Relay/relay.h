@@ -26,9 +26,14 @@ const char *unknown_str 			= "UNKNOWN";
 
 #define POOL_ID_LEN 					(64)
 
-#define PORT_MAX 						(65533)
+#ifndef PORT_MAX
+	#define PORT_MAX 							(65533)
+#endif
+#ifndef PORT_MIN
+	#define PORT_MIN 							(16384)
+#endif
 #define LISTEN_BACKLOG_MAX 				(50)
-#define MAX_PACKET_TRANSMIT_DELAY_USEC	(250000) // TODO determine experimentally?
+#define MAX_PACKET_TRANSMIT_DELAY_USEC	(200000) // TODO determine experimentally?
 
 #define NUM_MSG_HANDLER_THREADS 		(500)
 #define MSG_HANDLER_THREAD_MAX_AGE 		(5)

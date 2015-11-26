@@ -31,6 +31,9 @@ char *program_name = "Client";
 #ifndef PORT_MAX
 	#define PORT_MAX 							(65533)
 #endif
+#ifndef PORT_MIN
+	#define PORT_MIN 							(16384)
+#endif
 #define NUM_CERT_READ_ATTEMPTS 					(10)
 #define NUM_BIND_ATTEMPTS 						(5)
 #define MAX_SEND_ATTEMPTS 						(5)
@@ -116,6 +119,7 @@ typedef struct relay_info
 	unsigned int max_uid;
 	char relay_id[RELAY_ID_LEN];
 	char relay_ip[RELAY_IP_MAX_LENGTH];
+	unsigned int relay_port;
 	id_key_info current_key_info;
 	id_key_info key_info_history[PATH_HISTORY_LENGTH];
 	int kih_index;

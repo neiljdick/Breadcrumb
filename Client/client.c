@@ -1,7 +1,7 @@
 #include "client.h"
 
 #define ENABLE_STANDARD_LOGGING
-//#define ENABLE_LOGGING
+#define ENABLE_LOGGING
 //#define ENABLE_TRANSMIT_RECEIVE_LOGGING
 //#define ENABLE_KEY_HISTORY_LOGGING
 //#define ENABLE_BANDWIDTH_LOGGING
@@ -34,7 +34,7 @@ int g_current_conversation_index;
 conversation_info g_conversations[MAX_CONVERSATIONS];
 char g_friend_id[USER_NAME_MAX_LENGTH];
 char g_client_ip_addr[IP_BUF_MAX_LEN];
-int g_message_port, g_id_cache_port, g_cert_request_port;
+int g_message_port;
 
 route_history g_rhistory;
 
@@ -203,8 +203,6 @@ static int init_globals(int argc, char const *argv[])
 		#endif
 		return -1;
 	}
-	g_id_cache_port = g_message_port + 1;
-	g_cert_request_port = g_message_port + 2;
 	memset(g_user_id, 0, sizeof(g_user_id));
 	strncpy((char *)g_user_id, argv[1], (USER_NAME_MAX_LENGTH-1));
 	memset(g_conversations, 0, sizeof(g_conversations));
@@ -436,10 +434,10 @@ static int init_listening_socket(char *thread_id, unsigned int port, int *listen
 	struct sockaddr_in serv_addr;
 
 	if(port > PORT_MAX) {
-		return -1;	
+		exit(1);	
 	}
 	if(listening_socket == NULL) {
-		return -1;
+		exit(1);
 	}
 
 	*listening_socket = socket(AF_INET, SOCK_STREAM, 0);
@@ -448,7 +446,7 @@ static int init_listening_socket(char *thread_id, unsigned int port, int *listen
 			fprintf(stdout, "%s Failed to create stream socket\n", thread_id);
 		#endif
 
-		return -1;
+		exit(1);
 	}
 
 	bzero((char *) &serv_addr, sizeof(serv_addr));
@@ -460,7 +458,7 @@ static int init_listening_socket(char *thread_id, unsigned int port, int *listen
 			fprintf(stdout, "%s Error on binding\n", thread_id);
 		#endif
 
-		return -1;
+		exit(1);
 	}
 	listen(*listening_socket, LISTEN_BACKLOG_MAX);	
 
@@ -861,6 +859,10 @@ static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 		strcpy(ci_out->ri_pool[1].relay_ip, "10.10.6.201");
 		strcpy(ci_out->ri_pool[2].relay_ip, "10.10.6.202");
 		strcpy(ci_out->ri_pool[3].relay_ip, "10.10.6.220");
+		ci_out->ri_pool[0].relay_port = 2222;
+		ci_out->ri_pool[1].relay_port = 2222;
+		ci_out->ri_pool[2].relay_port = 2222;
+		ci_out->ri_pool[3].relay_port = 2222;
 		ci_out->ri_pool[0].is_active = 1;
 		ci_out->ri_pool[1].is_active = 1;
 		ci_out->ri_pool[2].is_active = 1;
@@ -874,10 +876,11 @@ static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 
 	#endif
 
-	/*  TODO - Check enough nodes (minimum 3 including server node)
-	 *  Check no two nodes have IP address within same subnet (lower 10 bits or something)
-	 *  Check no two nodes have same public cert
-	 *  Check no two nodes have same id
+	/*  TODO - Check enough relays (minimum 3 including server node)
+	 *  Check no two relays have IP address within same subnet (lower 10 bits or something)
+	 *  Check validity of relay port (compare against PORT_MAX and PORT_MIN)
+	 *  Check no two relays have same public cert
+	 *  Check no two relays have same id
 	 *  Server relay is online
 	 *  Entry relay is online
 	 */ 
@@ -988,7 +991,7 @@ static int get_relay_public_certificates_debug(conversation_info *ci_info)
 
 		bzero((char *) &serv_addr, sizeof(serv_addr));
 		serv_addr.sin_family = AF_INET;
-		serv_addr.sin_port = htons(g_cert_request_port);
+		serv_addr.sin_port = htons(ci_info->ri_pool[i].relay_port + 2);
 		serv_addr.sin_addr.s_addr = inet_addr(ci_info->ri_pool[i].relay_ip);
 		ret = connect(cr_socket, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
 		if(ret != 0) {
@@ -2713,7 +2716,7 @@ static int generate_packet_metadata(conversation_info *ci_info, payload_type p_t
 				return -1;
 			}
 			payload->type = DUMMY_PACKET_W_RETURN_ROUTE;
-			payload->onion_r1 = g_message_port;
+			payload->onion_r1 = ci_info->ri_pool[return_r_info->relay_route[0]].relay_port;
 			inet_aton(ci_info->ri_pool[return_r_info->relay_route[0]].relay_ip, (struct in_addr *)&ip_first_return_relay);
 			payload->client_id = (uint32_t)((ip_first_return_relay >> 32) & 0xFFFFFFFF);
 			payload->conversation_id = (uint32_t)(ip_first_return_relay & 0xFFFFFFFF);
@@ -2785,7 +2788,7 @@ static int create_packet(packet_type type, conversation_info *ci_info, route_inf
 				return -1;
 			}
 			memcpy(destination_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, RELAY_IP_MAX_LENGTH);
-			*destination_port = g_id_cache_port;
+			*destination_port = (ci_info->ri_pool[ci_info->index_of_entry_relay].relay_port + 1);
 
 			memcpy(ic_data.aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.aes_key, AES_KEY_SIZE_BYTES);
 			ic_data.relay_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.relay_user_id;	
@@ -2825,14 +2828,14 @@ static int create_packet(packet_type type, conversation_info *ci_info, route_inf
 				return -1;
 			}
 			memcpy(destination_ip, ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip, RELAY_IP_MAX_LENGTH);
-			*destination_port = g_message_port;
+			*destination_port = ci_info->ri_pool[ci_info->index_of_entry_relay].relay_port;
 
 			generate_AES_key((unsigned char *)or_data[0].iv, AES_KEY_SIZE_BYTES);
 			or_data[0].uid = ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.relay_user_id;
 			generate_new_user_id(ci_info->ri_pool[ci_info->index_of_entry_relay].max_uid, &(or_data[0].ord_enc.new_uid));
 			generate_AES_key((unsigned char *)or_data[0].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 			inet_aton(ci_info->ri_pool[relay_register_index].relay_ip, (struct in_addr *)&(or_data[0].ord_enc.next_pkg_ip));
-			or_data[0].ord_enc.next_pkg_port = g_id_cache_port;
+			or_data[0].ord_enc.next_pkg_port = (ci_info->ri_pool[relay_register_index].relay_port + 1);
 
 			or_data[0].ord_enc.ord_checksum = 0;
 			get_ord_packet_checksum(&(or_data[0].ord_enc), &(or_data[0].ord_enc.ord_checksum));
@@ -2904,7 +2907,7 @@ static int create_packet(packet_type type, conversation_info *ci_info, route_inf
 				return -1;
 			}
 			memcpy(destination_ip, ci_info->ri_pool[first_relay_index].relay_ip, RELAY_IP_MAX_LENGTH);
-			*destination_port = g_message_port;
+			*destination_port = ci_info->ri_pool[first_relay_index].relay_port;
 
 			ret = generate_onion_route_data_from_route_info(ci_info, r_info, packet);
 			if(ret < 0) {
@@ -2928,7 +2931,7 @@ static int create_packet(packet_type type, conversation_info *ci_info, route_inf
 				return -1;
 			}
 			memcpy(destination_ip, ci_info->ri_pool[first_relay_index].relay_ip, RELAY_IP_MAX_LENGTH);
-			*destination_port = g_message_port;
+			*destination_port = ci_info->ri_pool[first_relay_index].relay_port;
 
 			ret = generate_onion_route_data_from_route_info_using_rr_pairs(ci_info, r_info, packet);
 			if(ret < 0) {
@@ -2952,7 +2955,7 @@ static int create_packet(packet_type type, conversation_info *ci_info, route_inf
 				return -1;
 			}
 			memcpy(destination_ip, ci_info->ri_pool[first_relay_index].relay_ip, RELAY_IP_MAX_LENGTH);
-			*destination_port = g_message_port;
+			*destination_port = ci_info->ri_pool[first_relay_index].relay_port;
 
 			ret = generate_onion_route_data_from_route_info_verify_using_rr_pairs(ci_info, r_info, packet);
 			if(ret < 0) {
@@ -3003,11 +3006,12 @@ static int generate_onion_route_data_from_route_info(conversation_info *ci_info,
 		or_data[i].uid = ci_info->ri_pool[route_index].current_key_info.relay_user_id;
 		generate_new_user_id(ci_info->ri_pool[route_index].max_uid, &(or_data[i].ord_enc.new_uid));
 		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
-		or_data[i].ord_enc.next_pkg_port = g_message_port;
 		if(previous_route_index < 0) {
 			or_data[i].ord_enc.next_pkg_ip = 0;
+			or_data[i].ord_enc.next_pkg_port = 0;
 		} else {
 			inet_aton(ci_info->ri_pool[previous_route_index].relay_ip, (struct in_addr *)&(or_data[i].ord_enc.next_pkg_ip));
+			or_data[i].ord_enc.next_pkg_port = ci_info->ri_pool[previous_route_index].relay_port;
 		}
 
 		or_data[i].ord_enc.ord_checksum = 0;
@@ -3126,11 +3130,13 @@ static int generate_onion_route_data_from_route_info_using_rr_pairs(conversation
 		or_data[i].uid = ci_info->ri_pool[route_index].current_key_info.return_route_user_id;
 		generate_new_user_id(ci_info->ri_pool[route_index].max_uid, &(or_data[i].ord_enc.new_uid));
 		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
-		or_data[i].ord_enc.next_pkg_port = g_message_port;
+		
 		if(previous_route_index < 0) {
 			or_data[i].ord_enc.next_pkg_ip = 0;
+			or_data[i].ord_enc.next_pkg_port = 0;
 		} else {
 			inet_aton(ci_info->ri_pool[previous_route_index].relay_ip, (struct in_addr *)&(or_data[i].ord_enc.next_pkg_ip));
+			or_data[i].ord_enc.next_pkg_port = ci_info->ri_pool[previous_route_index].relay_port;
 		}
 
 		or_data[i].ord_enc.ord_checksum = 0;
@@ -3255,11 +3261,12 @@ static int generate_onion_route_data_from_route_info_verify_using_rr_pairs(conve
 		}
 		generate_new_user_id(ci_info->ri_pool[route_index].max_uid, &(or_data[i].ord_enc.new_uid));
 		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
-		or_data[i].ord_enc.next_pkg_port = g_message_port;
 		if(previous_route_index < 0) {
 			or_data[i].ord_enc.next_pkg_ip = 0;
+			or_data[i].ord_enc.next_pkg_port = 0;
 		} else {
 			inet_aton(ci_info->ri_pool[previous_route_index].relay_ip, (struct in_addr *)&(or_data[i].ord_enc.next_pkg_ip));
+			or_data[i].ord_enc.next_pkg_port = ci_info->ri_pool[previous_route_index].relay_port;
 		}
 
 		or_data[i].ord_enc.ord_checksum = 0;
@@ -3412,11 +3419,12 @@ static int generate_return_onion_route_data_from_route_info(conversation_info *c
 		or_data[i].uid = ci_info->ri_pool[route_index].current_key_info.return_route_user_id;
 		generate_new_user_id(ci_info->ri_pool[route_index].max_uid, &(or_data[i].ord_enc.new_uid));
 		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
-		or_data[i].ord_enc.next_pkg_port = g_message_port;
 		if(previous_route_index < 0) {
 			inet_aton(g_client_ip_addr, (struct in_addr *)&(or_data[i].ord_enc.next_pkg_ip));
+			or_data[i].ord_enc.next_pkg_port = g_message_port;
 		} else {
 			inet_aton(ci_info->ri_pool[previous_route_index].relay_ip, (struct in_addr *)&(or_data[i].ord_enc.next_pkg_ip));
+			or_data[i].ord_enc.next_pkg_port = ci_info->ri_pool[previous_route_index].relay_port;
 		}
 
 		or_data[i].ord_enc.ord_checksum = 0;
@@ -3475,7 +3483,7 @@ static int generate_return_onion_route_payload_from_route_info(conversation_info
 		or_data[i].uid = ci_info->ri_pool[route_index].current_key_info.return_route_payload_user_id;
 		generate_new_user_id(ci_info->ri_pool[route_index].max_uid, &(or_data[i].ord_enc.new_uid));
 		generate_AES_key((unsigned char *)or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
-		or_data[i].ord_enc.next_pkg_port = g_message_port;
+		or_data[i].ord_enc.next_pkg_port = ci_info->ri_pool[route_index].relay_port;
 
 		or_data[i].ord_enc.ord_checksum = 0;
 		get_ord_packet_checksum(&(or_data[i].ord_enc), &(or_data[i].ord_enc.ord_checksum));
