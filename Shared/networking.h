@@ -34,6 +34,8 @@
 
 #define IP_BUF_MAX_LEN 			(64)
 
+#define TCP_BYTE_OVERHEAD 		(66)
+
 int get_public_ip_address(char *thread_id, char *public_ip_addr, int public_ip_buf_len);
 int get_lan_ip_address(char *thread_id, char *public_ip_addr, int public_ip_buf_len);
 int get_eth_ip_address(char *thread_id, char *eth_ip_addr, int eth_ip_buf_len);

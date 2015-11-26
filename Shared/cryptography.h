@@ -34,7 +34,7 @@ unsigned char* get_private_key_password_hash();
 int generate_rsa_key_pair(const char *relay_id, RSA **rsa_out /* out */);
 int cb(char *buf, int size, int rwflag, void *u);
 int get_hash_of_string(char *thread_id, int hash_count, const char *in_str, char **out_str /* out */, int *relay_id_len /* out */);
-int get_pseudo_random_number(unsigned int initial_seed);
+int get_random_number(unsigned int initial_seed);
 int generate_AES_key(unsigned char *buf, int buf_len);
 int aes_encrypt_block(char *thread_id, unsigned char *plaintext, int plaintext_len, unsigned char *key, int key_len, unsigned char *iv, unsigned char *cipher_text);
 int aes_decrypt_block(char *thread_id, unsigned char *cipher_text, int cipher_text_len, unsigned char *key, int key_len, unsigned char *iv, unsigned char *plaintext /* out */);

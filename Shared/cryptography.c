@@ -536,7 +536,7 @@ int get_hash_of_string(char *thread_id, int hash_count, const char *in_str, char
     return 0;
 }
 
-int get_pseudo_random_number(unsigned int initial_seed)
+int get_random_number(unsigned int initial_seed)
 {
 	unsigned int seed, rand_val;
 	FILE* dev_urandom;

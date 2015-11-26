@@ -24,6 +24,7 @@
 #include "../Shared/cryptography.h"
 #include "../Shared/packet_definition.h"
 #include "../Shared/networking.h"
+#include "../Shared/utils.h"
 
 char *program_name = "Client";
 
@@ -33,11 +34,9 @@ char *program_name = "Client";
 #define NUM_CERT_READ_ATTEMPTS 					(10)
 #define NUM_BIND_ATTEMPTS 						(5)
 #define MAX_SEND_ATTEMPTS 						(5)
-#define MAIN_THREAD_SLEEP_TIME					(5)
 #define MAX_READ_ATTEMPTS 						(5)
 #define LISTEN_BACKLOG_MAX 						(5)
 
-#define PACKET_TRANSMISSION_DELAY				(1)
 #define MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER 	(3)
 
 #define PUBLIC_KEY_CERT_SIZE					(426)
@@ -55,8 +54,12 @@ char *program_name = "Client";
 
 #define THREAD_COMMAND_DATA_SIZE 				(512)
 #define THREAD_RETURN_PACKET_CONFIRM_SIZE		(64)
-#define MAX_CHECK_NODE_TIME_SEC					(2)
+#define MAX_CHECK_NODE_TIME_SEC					(3)
 #define MAX_VERIFY_ROUTE_TIME_SEC				(5)
+
+#define BANDWIDTH_ST_LENGTH						(64)
+#define CONSTANT_BANDWIDTH_BYTES_PER_SEC		(256.0)
+#define MIN_PACKET_TRANSMISSION_DELAY_US		(500000)
 
 const char *public_cert_dir = ".relay_certs";
 
@@ -143,7 +146,7 @@ typedef struct route_pair
 
 typedef struct route_history_info
 {
-	int relay_route[MAX_ROUTE_LENGTH*2];
+	int relay_route[MAX_ROUTE_LENGTH * 2];
 	int route_length;
 } route_history_info;
 
@@ -194,5 +197,41 @@ typedef struct thread_comm
 	command_attempts curr_attempts;
 	uint8_t command_data[THREAD_COMMAND_DATA_SIZE];
 } thread_comm;
+
+const char *bandwidth_log_name = "bandwidth.csv";
+
+typedef struct bandwidth_st
+{
+	float timediff_sec;
+	char sent_packet;
+} bandwidth_st;
+
+typedef struct bandwidth_data
+{
+	bandwidth_st b_st[BANDWIDTH_ST_LENGTH];
+	int index;
+} bandwidth_data;
+
+typedef enum {
+	DONT_SEND_PACKET 					= 0,
+	DONT_SEND_PACKET_R,
+	DONT_SEND_PACKET_RR,
+	DONT_SEND_PACKET_T2,
+	DONT_SEND_PACKET_T3,
+	SEND_DUMMY_PACKET_NO_RR,
+	SEND_DUMMY_PACKET_NO_RR_T2,
+	SEND_DUMMY_PACKET_NO_RR_AND_W_RR,
+	SEND_DUMMY_PACKET_W_RR,
+	SEND_DUMMY_PACKET_W_RR_T2,
+	SEND_DUMMY_PACKET_W_RR_AND_NO_RR,
+	DO_NODE_CONNECTION_CHECK
+} constant_bandwidth_packet_send;
+
+typedef enum {
+	NO_ERROR 							= 0,
+	ENTRY_RELAY_OFFLINE					= 1,
+	SERVER_RELAY_OFFLINE 				= 2,
+	TOO_FEW_RELAYS_ONLINE 				= 4
+} error_codes;
 
 #endif

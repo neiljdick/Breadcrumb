@@ -635,6 +635,11 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 	unsigned char packet_data[packet_size_bytes];
 
 	switch(pd_ptr->type) {
+		case DUMMY_PACKET_NO_RETURN_ROUTE:
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "%s Received non-route packet, type = %s. Dropping packet\n", thread_id, get_string_for_payload_type(pd_ptr->type));
+			#endif	
+		break;
 		case DUMMY_PACKET_W_RETURN_ROUTE:
 			next_addr.s_addr = (((uint64_t)pd_ptr->client_id) << 32) | ((uint64_t)pd_ptr->conversation_id);
 			next_port = pd_ptr->onion_r1;
@@ -743,7 +748,7 @@ int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destin
 	client_addr.sin_family = AF_INET;
 	for(i = 0; i < NUM_BIND_ATTEMPTS; i++) {
 		initial_seed_value = (((unsigned int)relay_id[1])<<24) | (((unsigned int)relay_id[3])<<16) | (((unsigned int)relay_id[0])<<8) | ((unsigned int)relay_id[2]);
-		source_port = get_pseudo_random_number(initial_seed_value);
+		source_port = get_random_number(initial_seed_value);
 		source_port %= 65535;
 		if(source_port < 16384)
 			source_port += 16384;
@@ -806,7 +811,7 @@ int apply_packet_mixing_delay(void)
 {
 	unsigned int sleep_time_usec;
 
-	sleep_time_usec = get_pseudo_random_number(0);
+	sleep_time_usec = get_random_number(0);
 	sleep_time_usec %= MAX_PACKET_TRANSMIT_DELAY_USEC;
 	usleep(sleep_time_usec);
 

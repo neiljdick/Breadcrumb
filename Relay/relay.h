@@ -28,7 +28,7 @@ const char *unknown_str 			= "UNKNOWN";
 
 #define PORT_MAX 						(65533)
 #define LISTEN_BACKLOG_MAX 				(50)
-#define MAX_PACKET_TRANSMIT_DELAY_USEC	(100000) // TODO determine experimentally?
+#define MAX_PACKET_TRANSMIT_DELAY_USEC	(250000) // TODO determine experimentally?
 
 #define NUM_MSG_HANDLER_THREADS 		(500)
 #define MSG_HANDLER_THREAD_MAX_AGE 		(5)
