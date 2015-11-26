@@ -1,7 +1,7 @@
 #include "client.h"
 
-//#define ENABLE_STANDARD_LOGGING
-#define ENABLE_LOGGING
+#define ENABLE_STANDARD_LOGGING
+//#define ENABLE_LOGGING
 //#define ENABLE_TRANSMIT_RECEIVE_LOGGING
 //#define ENABLE_KEY_HISTORY_LOGGING
 //#define ENABLE_BANDWIDTH_LOGGING
@@ -611,6 +611,11 @@ static int handle_packet_transmission(int should_send_packet, int *did_send_pack
 			#ifdef ENABLE_LOGGING
 				fprintf(stdout, "[SEND PACKET THREAD] Failed to send packet to relay, ip = %s\n", g_sp_node->destination_ip);
 			#endif
+
+			#ifdef ENABLE_STANDARD_LOGGING
+				fprintf(stdout, "Fatal connection error occurred, err_code=%x\n", (unsigned int)ENTRY_RELAY_OFFLINE);
+			#endif
+			exit(0);
 		}
 
 		sp_node_to_free = g_sp_node;
