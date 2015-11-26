@@ -1,0 +1,29 @@
+- SPIDER
+	- [ ] Keep track of which relays are online
+- MESSAGE FUNCTIONALITY
+	
+- PEER DISCOVERY
+	- [ ] Directory of relays
+	- [ ] Can query relay for other relays
+- CERTIFICATE DIRECTORY
+
+- DOS PREVENTION
+	- [ ] Proof of work?
+	- [ ] Use CAM to prevent key registry too often?
+- KEY AGE INCREMENT
+	- [ ] Prevents key data from filling
+- XOR UID W/ RANDOM DATA (KEY?)
+	- [ ] Otherwise previously sent packets could be attacked (as it is known to what value certain part of packet pertains)
+- KEEP AVERAGE BANDWIDTH CONSTANT ?
+	- [ ] Send dummy packets in order to keep bandwidth constant
+- RELAY USAGE STATS
+	- [ ] Print to csv upon receiving signal
+		- [ ] Average packet forwards / sec
+		- [ ] Average new key subscriptions / sec
+		- [ ] Total number of messages
+		- [ ] Total number of key clashes
+		- [ ] Total number of keys used
+		- [ ] Total number of key expirations
+- TESTING!
+	- [ ] Multiple clients
+	- [ ] DOS attack 
