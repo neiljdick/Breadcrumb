@@ -16,6 +16,8 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 
+#include "utils.h"
+
 #define MAX_KEY_CLASH_PERMITTED 			(4)
 
 #define AES_KEY_SIZE_BITS 					(128)
