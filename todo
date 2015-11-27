@@ -6,7 +6,7 @@
 	- [ ] Directory of relays
 	- [ ] Can query relay for other relays
 - CERTIFICATE DIRECTORY
-
+	- [ ] Accessed via TOR?
 - DOS PREVENTION
 	- [ ] Proof of work?
 	- [ ] Use CAM to prevent key registry too often?
@@ -24,6 +24,8 @@
 		- [ ] Total number of key clashes
 		- [ ] Total number of keys used
 		- [ ] Total number of key expirations
+- MULTIPLE CLIENTS
+	- [ ] Appropriate locking of key store
 - TESTING!
-	- [ ] Multiple clients
+	- [ ] Overnight, multiple clients
 	- [ ] DOS attack 

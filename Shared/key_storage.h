@@ -65,6 +65,7 @@ int swap_current_mapping_to_ram(char *thread_id);
 int get_number_of_key_clash_backups(char *thread_id, unsigned int *total_key_clash_backups);
 int handle_key_entry_age_increment(char *thread_id);
 int get_max_user_id(char *thread_id, unsigned int *max_uid);
+int get_current_amount_of_keys_used(unsigned long *num_keys_used);
 
 int timeval_subtract(struct timeval *result, struct timeval *x, struct timeval *y);
 

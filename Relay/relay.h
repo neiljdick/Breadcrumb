@@ -13,12 +13,15 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <semaphore.h>
+#include <signal.h>
 
 #include "../Shared/key_storage.h"
 #include "../Shared/cryptography.h"
 #include "../Shared/packet_definition.h"
 
 const char *program_name = "Relay";
+
+const char *log_file = "relay_log.csv";
 
 const char *msg_handler_str 		= "MSG HANDLER";
 const char *id_cache_handler_str 	= "ID CACHE HANDLER";
@@ -47,13 +50,16 @@ const char *unknown_str 			= "UNKNOWN";
 #define MSG_THREAD_POOL_INDEX			(0)
 #define USER_ID_CACHE_POOL_INDEX		(1)
 
-#define MAIN_THREAD_SLEEP_SEC 			(10)
+#define MAIN_THREAD_SLEEP_SEC 			(1)
 #define CERT_REQUEST_SLEEP_US 			(50000)
 #define ID_CACHE_SLEEP_US 				(50000)
 
 #define NUM_READ_ATTEMPTS 				(5)
 #define NUM_BIND_ATTEMPTS 				(5)
 #define MAX_SEND_ATTEMPTS 				(5)
+
+#define DEFAULT_LOGGING_INTERVAL 		(PER_HOUR)
+#define LOGGING_DATA_LEN 				(60)
 
 typedef struct client_thread_description
 {
@@ -73,6 +79,31 @@ typedef struct thread_pool
 	client_thread_description *first_ct, *last_ct;
 	unsigned int num_active_client_threads;
 } thread_pool;
+
+typedef enum 
+{
+	PER_SECOND				= 0,
+	PER_MINUTE,
+	PER_FIFTEEN_MINUTES,
+	PER_THIRTY_MINUTES,
+	PER_HOUR,
+	PER_DAY,
+	PER_WEEK
+} logging_interval;
+
+typedef struct
+{
+	unsigned int logging_index;
+	unsigned int new_logging_data_available;
+	unsigned long logging_index_valid[LOGGING_DATA_LEN];
+	unsigned long num_cert_requests[LOGGING_DATA_LEN];
+	unsigned long num_id_cache_packets[LOGGING_DATA_LEN];
+	unsigned long num_relay_packets[LOGGING_DATA_LEN];
+	unsigned long num_non_relay_packets[LOGGING_DATA_LEN];
+	float percentage_of_keystore_used[LOGGING_DATA_LEN];
+	unsigned long total_num_of_id_cache_threads[LOGGING_DATA_LEN];
+	unsigned long total_num_of_relay_threads[LOGGING_DATA_LEN];
+} logging_data;
 
 int initialize_key_store(char *thread_id);
 int init_listening_socket(char *thread_id, unsigned int port, int *listening_socket /* out */);

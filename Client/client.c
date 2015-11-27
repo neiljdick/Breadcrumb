@@ -1,7 +1,7 @@
 #include "client.h"
 
 #define ENABLE_STANDARD_LOGGING
-#define ENABLE_LOGGING
+//#define ENABLE_LOGGING
 //#define ENABLE_TRANSMIT_RECEIVE_LOGGING
 //#define ENABLE_KEY_HISTORY_LOGGING
 //#define ENABLE_BANDWIDTH_LOGGING
@@ -174,7 +174,7 @@ static int init_globals(int argc, char const *argv[])
 {
 	if(argc != 3) {
 		#ifdef ENABLE_STANDARD_LOGGING
-			fprintf(stdout, "Usage: ./%s [USER ID] [PORT]\n", program_name);
+			fprintf(stdout, "Usage: ./%s USER_ID PORT\n", program_name);
 		#endif
 		exit(-1);
 	}
@@ -188,20 +188,26 @@ static int init_globals(int argc, char const *argv[])
 		#ifdef ENABLE_STANDARD_LOGGING
 			fprintf(stdout, "Username must be less than %u characters\n", USER_NAME_MAX_LENGTH);
 		#endif
-		return -1;
+		exit(-1);
 	}
 	if(strlen(argv[2]) < USER_NAME_MIN_LENGTH) {
 		#ifdef ENABLE_STANDARD_LOGGING
 			fprintf(stdout, "Username must be more than %u characters\n", USER_NAME_MIN_LENGTH);
 		#endif
-		return -1;
+		exit(-1);
 	}
 	g_message_port = (unsigned int)atoi(argv[2]);
 	if(g_message_port > PORT_MAX) {
 		#ifdef ENABLE_STANDARD_LOGGING
 			fprintf(stdout, "[MAIN THREAD] Port number (%u) must be less than %u\n", g_message_port, PORT_MAX);
 		#endif
-		return -1;
+		exit(-1);
+	}
+	if(g_message_port < PORT_MIN) {
+		#ifdef ENABLE_STANDARD_LOGGING
+			fprintf(stdout, "[MAIN THREAD] Port number (%u) must be greater than %u\n", g_message_port, PORT_MIN);
+		#endif
+		exit(-1);
 	}
 	memset(g_user_id, 0, sizeof(g_user_id));
 	strncpy((char *)g_user_id, argv[1], (USER_NAME_MAX_LENGTH-1));
@@ -859,10 +865,10 @@ static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 		strcpy(ci_out->ri_pool[1].relay_ip, "10.10.6.201");
 		strcpy(ci_out->ri_pool[2].relay_ip, "10.10.6.202");
 		strcpy(ci_out->ri_pool[3].relay_ip, "10.10.6.220");
-		ci_out->ri_pool[0].relay_port = 2222;
-		ci_out->ri_pool[1].relay_port = 2222;
-		ci_out->ri_pool[2].relay_port = 2222;
-		ci_out->ri_pool[3].relay_port = 2222;
+		ci_out->ri_pool[0].relay_port = 22222;
+		ci_out->ri_pool[1].relay_port = 22222;
+		ci_out->ri_pool[2].relay_port = 22222;
+		ci_out->ri_pool[3].relay_port = 22222;
 		ci_out->ri_pool[0].is_active = 1;
 		ci_out->ri_pool[1].is_active = 1;
 		ci_out->ri_pool[2].is_active = 1;
