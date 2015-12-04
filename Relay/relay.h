@@ -59,7 +59,7 @@ const char *unknown_str 			= "UNKNOWN";
 #define MAX_SEND_ATTEMPTS 				(5)
 
 #define DEFAULT_LOGGING_INTERVAL 		(PER_HOUR)
-#define LOGGING_DATA_LEN 				(60)
+#define LOGGING_DATA_LEN 				(360)
 
 typedef struct client_thread_description
 {
@@ -84,6 +84,8 @@ typedef enum
 {
 	PER_SECOND				= 0,
 	PER_MINUTE,
+	PER_FIVE_MINUTES,
+	PER_TEN_MINUTES,
 	PER_FIFTEEN_MINUTES,
 	PER_THIRTY_MINUTES,
 	PER_HOUR,
@@ -101,8 +103,11 @@ typedef struct
 	unsigned long num_relay_packets[LOGGING_DATA_LEN];
 	unsigned long num_non_relay_packets[LOGGING_DATA_LEN];
 	float percentage_of_keystore_used[LOGGING_DATA_LEN];
-	unsigned long total_num_of_id_cache_threads[LOGGING_DATA_LEN];
-	unsigned long total_num_of_relay_threads[LOGGING_DATA_LEN];
+	unsigned long num_key_get_failures[LOGGING_DATA_LEN];
+	unsigned long total_num_of_id_cache_threads_created[LOGGING_DATA_LEN];
+	unsigned long total_num_of_relay_threads_created[LOGGING_DATA_LEN];
+	unsigned long total_num_of_id_cache_threads_destroyed[LOGGING_DATA_LEN];
+	unsigned long total_num_of_relay_threads_destroyed[LOGGING_DATA_LEN];
 } logging_data;
 
 int initialize_key_store(char *thread_id);

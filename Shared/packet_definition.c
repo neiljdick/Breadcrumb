@@ -1,6 +1,6 @@
 #include "packet_definition.h"
 
-#define ENABLE_LOGGING
+//#define ENABLE_LOGGING
 
 const unsigned int packet_size_bytes = (((ONION_ROUTE_DATA_SIZE * MAX_ROUTE_LENGTH) * 2) + (sizeof(payload_data)));
 const unsigned int payload_start_byte = (MAX_ROUTE_LENGTH * sizeof(onion_route_data));

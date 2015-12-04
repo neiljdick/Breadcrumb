@@ -57,8 +57,8 @@ char *program_name = "Client";
 
 #define THREAD_COMMAND_DATA_SIZE 				(512)
 #define THREAD_RETURN_PACKET_CONFIRM_SIZE		(64)
-#define MAX_CHECK_NODE_TIME_SEC					(3)
-#define MAX_VERIFY_ROUTE_TIME_SEC				(5)
+#define MAX_CHECK_NODE_TIME_SEC					(5)
+#define MAX_VERIFY_ROUTE_TIME_SEC				(10)
 
 #define BANDWIDTH_ST_LENGTH						(64)
 #define CONSTANT_BANDWIDTH_BYTES_PER_SEC		(256.0)

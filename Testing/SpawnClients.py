@@ -3,14 +3,16 @@ import struct
 import queue
 import time
 
+client_num = 0
+
 waypoint_index = 0
-waypoints =	[	(200, 0.25, 10), 
-				(400, 1.0, 60),
-				(500, 5, 30),
-				(100, 1.67, 15),
-				(550, 0.1, 35),
-				(150, 0.05, 10),
-				(50, 10, 10)
+waypoints =	[	(200, 0.25, 5), 
+				(120, 1.0, 5),
+				(160, 5, 5),
+				(250, 1.67, 5),
+				(300, 0.1, 5),
+				(400, 0.05, 5),
+				(80, 10, 5)
 			]
 
 port_min = 16384;
@@ -27,7 +29,8 @@ while waypoint_index < len(waypoints):
 
 	while (waypoint_remain_time_min > 0):
 		if(proc_queue.qsize() < num_clients_target):
-			new_client_proc = subprocess.Popen(["/media/veracrypt1/Prototype/Prototype_C/Client/client", "craig", str(port)], shell=False, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+			new_client_proc = subprocess.Popen(["/media/veracrypt1/Prototype/Prototype_C/Client/client", ("client_" + str(client_num)), str(port)], shell=False, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+			client_num += 1
 			try:
 			    new_client_proc.communicate(b'CLIENT_INST' + struct.pack("H", proc_queue.qsize()), timeout=0.1)
 			except Exception:

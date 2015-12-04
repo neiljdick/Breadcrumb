@@ -1,31 +1,40 @@
-- SPIDER
+- [ ] ENCRYPT KEY DATABASE
+	- [ ] Using hash value of relay password?
+- [X] KEY CLASH STRUCTURE
+	- [X] Modify key backup structure
+- [ ] KEY AGE INCREMENT
+	- [ ] Increment clash keys also
+	- [ ] Only increment for 0.1 seconds at a time
+- [ ] SPIDER
 	- [ ] Keep track of which relays are online
-- MESSAGE FUNCTIONALITY
-	
-- PEER DISCOVERY
+- [ ] MESSAGE FUNCTIONALITY
+- [ ] PEER DISCOVERY
 	- [ ] Directory of relays
 	- [ ] Can query relay for other relays
-- CERTIFICATE DIRECTORY
+- [ ] CERTIFICATE DIRECTORY
 	- [ ] Accessed via TOR?
-- DOS PREVENTION
+- [ ] DOS PREVENTION
 	- [ ] Proof of work?
 	- [ ] Use CAM to prevent key registry too often?
-- KEY AGE INCREMENT
-	- [ ] Prevents key data from filling
-- XOR UID W/ RANDOM DATA (KEY?)
+- [ ] XOR UID W/ RANDOM DATA (KEY?)
 	- [ ] Otherwise previously sent packets could be attacked (as it is known to what value certain part of packet pertains)
-- KEEP AVERAGE BANDWIDTH CONSTANT ?
-	- [ ] Send dummy packets in order to keep bandwidth constant
-- RELAY USAGE STATS
-	- [ ] Print to csv upon receiving signal
-		- [ ] Average packet forwards / sec
-		- [ ] Average new key subscriptions / sec
-		- [ ] Total number of messages
-		- [ ] Total number of key clashes
-		- [ ] Total number of keys used
-		- [ ] Total number of key expirations
-- MULTIPLE CLIENTS
+- [X] KEEP AVERAGE BANDWIDTH CONSTANT ?
+	- [X] Send dummy packets in order to keep bandwidth constant
+- [ ] RELAY USAGE STATS
+	- [X] Print to csv upon receiving signal
+		- [X] Average packet forwards / sec
+		- [X] Average new key subscriptions / sec
+		- [X] Total number of messages
+		- [X] Total number of key clashes
+		- [X] Total number of keys used
+		- [X] Total number of key expirations
+- [ ] MULTIPLE CLIENTS
 	- [ ] Appropriate locking of key store
-- TESTING!
+- [ ] TESTING!
 	- [ ] Overnight, multiple clients
 	- [ ] DOS attack 
+
+
+-------------------------------------------------------- BUG TRACKING --------------------------------------------------------------------
+- Need to fix issue when pressing 'Ctrl-C' when relay is asking for relay password
+- Need to check that when generate UID it is not a part of history or one that is currently in use
