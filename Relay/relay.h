@@ -14,6 +14,7 @@
 #include <arpa/inet.h>
 #include <semaphore.h>
 #include <signal.h>
+#include <limits.h>
 
 #include "../Shared/key_storage.h"
 #include "../Shared/cryptography.h"
@@ -50,7 +51,8 @@ const char *unknown_str 			= "UNKNOWN";
 #define MSG_THREAD_POOL_INDEX			(0)
 #define USER_ID_CACHE_POOL_INDEX		(1)
 
-#define MAIN_THREAD_SLEEP_SEC 			(1)
+#define USEC_PER_SEC 					(1000000)
+#define MAIN_THREAD_SLEEP_USEC 			(200000)
 #define CERT_REQUEST_SLEEP_US 			(50000)
 #define ID_CACHE_SLEEP_US 				(50000)
 

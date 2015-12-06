@@ -7,6 +7,7 @@
 //#define PRINT_PACKETS
 #define ENABLE_LOG_ON_EXIT
 //#define RECORD_UIDS
+#define ENABLE_BANDWIDTH_REPORTING_UI
 
 sem_t keystore_sem, logging_sem;
 
@@ -22,8 +23,7 @@ RSA *rsa;
 logging_interval g_logging_interval;
 logging_data g_logging_data;
 FILE *g_log_file=NULL;
-
-char g_curr_send_packet_char = '-';
+unsigned int num_relay_packets_bandwidth_report;
 
 void init_globals(int argc, char *argv[]);
 void handle_pthread_ret(char *thread_id, int ret);
@@ -32,7 +32,7 @@ void update_amount_of_keys_used_for_logging(void);
 void handle_logging(void);
 void log_data_to_file(int dummy);
 void log_data_to_file_and_exit(int dummy);
-static char get_print_char(void);
+void handle_bandwidth_reporting(void);
 
 #ifdef RECORD_UIDS
 FILE *fp_set_uids=NULL;
@@ -40,7 +40,7 @@ FILE *fp_set_uids=NULL;
 
 int main(int argc, char *argv[])
 {
-	int ret;
+	int ret, n, one_sec_count;
 	pthread_t certificate_request_thread, thread_pool_manager_thread;
 	pthread_t client_msg_new_connection_handler_thread, client_id_cache_handler_thread;
 
@@ -121,9 +121,22 @@ int main(int argc, char *argv[])
 		exit(-4);
 	}
 
+	n = 0;
+	one_sec_count = (USEC_PER_SEC/MAIN_THREAD_SLEEP_USEC);
 	while(1) {
-		sleep(MAIN_THREAD_SLEEP_SEC);
-		handle_logging();
+		usleep(MAIN_THREAD_SLEEP_USEC);
+
+		#ifdef ENABLE_BANDWIDTH_REPORTING_UI
+			handle_bandwidth_reporting();
+		#endif
+		if(n >= one_sec_count)  {
+			handle_logging();
+		}		
+
+		n++;
+		if(n >= one_sec_count) {
+			n = 0;
+		}
 	}
 
 	return 0;
@@ -627,11 +640,6 @@ void *handle_msg_client_thread(void *ptr)
 	#endif
 
 	sem_wait(&keystore_sem);
-	#ifndef ENABLE_LOGGING
-		char c = get_print_char();
-		fprintf(g_log_file, "\r%c%c%c", c, c, c);
-		fflush(g_log_file);
-	#endif
 	
 	or_data_ptr = (onion_route_data *)packet_data_encrypted;
 	or_data_decrypted_ptr = (onion_route_data *)packet_data_decrypted;
@@ -758,6 +766,7 @@ void *handle_msg_client_thread(void *ptr)
 		g_logging_data.total_num_of_relay_threads_destroyed[g_logging_data.logging_index]++;
 		sem_post(&logging_sem);
 
+		num_relay_packets_bandwidth_report += 1;
 	} else {
 		next_addr.s_addr = or_data_decrypted_ptr->ord_enc.next_pkg_ip;
 		#ifdef ENABLE_LOGGING
@@ -770,6 +779,8 @@ void *handle_msg_client_thread(void *ptr)
 		g_logging_data.num_relay_packets[g_logging_data.logging_index]++;
 		g_logging_data.total_num_of_relay_threads_destroyed[g_logging_data.logging_index]++;
 		sem_post(&logging_sem);
+
+		num_relay_packets_bandwidth_report += 2;
 	}
 
 	#ifdef ENABLE_THREAD_LOGGING
@@ -1020,6 +1031,44 @@ void update_amount_of_keys_used_for_logging(void)
 	g_logging_data.percentage_of_keystore_used[g_logging_data.logging_index] = ((float)tmp/(float)g_max_uid) * 100.0;
 }
 
+__attribute__((unused)) void handle_bandwidth_reporting(void)
+{
+	static float average_bandwidth[((USEC_PER_SEC/MAIN_THREAD_SLEEP_USEC) * 3)];
+	static unsigned int average_bandwidth_index = 0;
+	static unsigned int prev_num_relay_packets_bandwidth_report = 0;
+	unsigned int num_packets_relayed, i;
+	float bandwidth, average_bandwidth_reporting;
+
+	if(prev_num_relay_packets_bandwidth_report > num_relay_packets_bandwidth_report) {
+		num_packets_relayed = num_relay_packets_bandwidth_report + (UINT_MAX - prev_num_relay_packets_bandwidth_report);
+	} else {
+		num_packets_relayed = num_relay_packets_bandwidth_report - prev_num_relay_packets_bandwidth_report;
+	}
+	prev_num_relay_packets_bandwidth_report = num_relay_packets_bandwidth_report;
+
+	bandwidth = ((float)packet_size_bytes * (float)num_packets_relayed) * (float)(USEC_PER_SEC/MAIN_THREAD_SLEEP_USEC);
+	bandwidth /= 1000.0;
+
+	average_bandwidth[average_bandwidth_index] = bandwidth;
+	average_bandwidth_index++;
+	if(average_bandwidth_index >= sizeof(average_bandwidth)/sizeof(average_bandwidth[0])) {
+		average_bandwidth_index = 0;
+	}
+
+	average_bandwidth_reporting = 0;
+	for (i = 0; i < sizeof(average_bandwidth)/sizeof(average_bandwidth[0]); ++i) {
+		average_bandwidth_reporting += average_bandwidth[i];
+	}
+	average_bandwidth_reporting /= (float)(sizeof(average_bandwidth)/sizeof(average_bandwidth[0]));
+
+	fprintf(stdout, "\33[2K\r");
+	fprintf(stdout, "%.2f kB/s ", average_bandwidth_reporting);
+	for (i = 0; i < (unsigned int)bandwidth; i+=10) {
+		fprintf(stdout, "-");
+	}
+	fflush(stdout);
+}
+
 void handle_logging(void)
 {
 	static unsigned int interval_count = 0;
@@ -1147,27 +1196,4 @@ void log_data_to_file_and_exit(int dummy)
 {
 	log_data_to_file(0);
 	exit(0);
-}
-
-__attribute__((unused)) static char get_print_char(void)
-{
-	switch(g_curr_send_packet_char) {
-		case '-':
-			g_curr_send_packet_char = '\\';
-		break;
-		case '\\':
-			g_curr_send_packet_char = '|';
-		break;
-		case '|':
-			g_curr_send_packet_char = '/';
-		break;
-		case '/':
-			g_curr_send_packet_char = '-';
-		break;
-		default:
-			g_curr_send_packet_char = '-';
-		break;
-	}
-
-	return g_curr_send_packet_char;
 }
