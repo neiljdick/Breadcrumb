@@ -11,6 +11,7 @@
 #include <openssl/rsa.h>
 #include <openssl/pem.h>
 #include <time.h>
+#include <sys/time.h>
 
 #include "key_storage.h"
 

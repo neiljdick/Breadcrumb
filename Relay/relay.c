@@ -1,51 +1,67 @@
 #include "relay.h"
 
-#define ENABLE_LOGGING
+//#define LOG_TO_FILE_INSTEAD_OF_STDOUT
+//#define ENABLE_LOGGING
 #define DEBUG_MODE
 //#define ENABLE_THREAD_LOGGING
 //#define PRINT_PACKETS
+#define ENABLE_LOG_ON_EXIT
+//#define RECORD_UIDS
+#define ENABLE_BANDWIDTH_REPORTING_UI
 
-sem_t keystore_sem;
+sem_t keystore_sem, logging_sem;
 
 thread_pool thread_pools[NUM_THREAD_POOLS];
 client_thread_description msg_client_pool[NUM_MSG_HANDLER_THREADS];
 client_thread_description user_id_cache_pool[NUM_USER_ID_CACHE_THREADS];
 
-unsigned int client_msg_port, id_cache_port, cert_request_port;
-char *relay_id;
-int relay_id_len;
+unsigned int g_client_msg_port, g_id_cache_port, g_cert_request_port;
+unsigned int g_max_uid, g_total_key_clash_backups;
+char *g_relay_id;
+int g_relay_id_len;
 RSA *rsa;
-unsigned int max_uid, total_key_clash_backups;
+logging_interval g_logging_interval;
+logging_data g_logging_data;
+FILE *g_log_file=NULL;
+unsigned int num_relay_packets_bandwidth_report;
 
-void handle_pthread_ret(char *thread_id, int ret, int clientfd);
+void init_globals(int argc, char *argv[]);
+void handle_pthread_ret(char *thread_id, int ret);
 void handle_pthread_bytesread(int bytes_read, int clientfd);
-void init_globals();
+void update_amount_of_keys_used_for_logging(void);
+void handle_logging(void);
+void log_data_to_file(int dummy);
+void log_data_to_file_and_exit(int dummy);
+void handle_bandwidth_reporting(void);
 
-int main(int argc, char const *argv[])
+#ifdef RECORD_UIDS
+FILE *fp_set_uids=NULL;
+#endif
+
+int main(int argc, char *argv[])
 {
-	int ret;
+	int ret, n, one_sec_count;
 	pthread_t certificate_request_thread, thread_pool_manager_thread;
 	pthread_t client_msg_new_connection_handler_thread, client_id_cache_handler_thread;
 
-	if(argc != 3) {
-		fprintf(stdout, "[MAIN THREAD] Usage: ./%s [RELAY ID] [PORT]\n", program_name);
-		exit(-1);
-	}
-	init_globals();
-
-	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "[MAIN THREAD] %s program begin\n", program_name);
+	#ifdef RECORD_UIDS
+		fp_set_uids = fopen("set_uids.csv", "w");
+		if(fp_set_uids == NULL)
+			exit(1);
 	#endif
 
-	ret = get_hash_of_string("[MAIN THREAD]", RELAY_ID_HASH_COUNT, argv[1], &relay_id, &relay_id_len);
-	if(ret < 0) {
-		exit(-2);	
-	}
-	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "[MAIN THREAD] Relay id=%s\n", relay_id);
+	init_globals(argc, argv);
+
+	signal(SIGUSR1, log_data_to_file);
+	#ifdef ENABLE_LOG_ON_EXIT
+		signal(SIGINT, log_data_to_file_and_exit);
 	#endif
 
-	ret = load_rsa_key_pair(relay_id, &rsa);
+	#ifdef ENABLE_LOGGING
+		fprintf(g_log_file, "[MAIN THREAD] %s program begin\n", program_name);
+	#endif
+
+	ret = load_rsa_key_pair(g_relay_id, &rsa);
 	if(ret < 0) {
 		exit(-2);	
 	}
@@ -60,18 +76,10 @@ int main(int argc, char const *argv[])
 		exit(-2);	
 	}
 
-	client_msg_port = (unsigned int)atoi(argv[2]);
-	if(client_msg_port > PORT_MAX) {
-		fprintf(stdout, "[MAIN THREAD] Port number (%u) must be less than %u\n", client_msg_port, PORT_MAX);
-		exit(-5);
-	}
-	id_cache_port = client_msg_port + 1;
-	cert_request_port = client_msg_port + 2;
-
 	ret = initialize_thread_pools();
 	if(ret < 0) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to initialize thread pools");
+			fprintf(g_log_file, "[MAIN THREAD] Failed to initialize thread pools");
 		#endif
 
 		exit(-3);
@@ -80,7 +88,7 @@ int main(int argc, char const *argv[])
 	ret = pthread_create(&thread_pool_manager_thread, NULL, thread_pool_manager_thread_thread, NULL);
 	if(ret != 0) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to create thread pool manager thread, %s\n", strerror(errno));
+			fprintf(g_log_file, "[MAIN THREAD] Failed to create thread pool manager thread, %s\n", strerror(errno));
 		#endif
 
 		exit(-4);
@@ -89,7 +97,7 @@ int main(int argc, char const *argv[])
 	ret = pthread_create(&certificate_request_thread, NULL, certificate_request_handler_thread , NULL);
 	if(ret != 0) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to create certificate request thread, %s\n", strerror(errno));
+			fprintf(g_log_file, "[MAIN THREAD] Failed to create certificate request thread, %s\n", strerror(errno));
 		#endif
 
 		exit(-4);
@@ -98,7 +106,7 @@ int main(int argc, char const *argv[])
 	ret = pthread_create(&client_msg_new_connection_handler_thread, NULL, client_msg_new_connection_handler, NULL);
 	if(ret != 0) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to create new msg connection handler thread, %s\n", strerror(errno));
+			fprintf(g_log_file, "[MAIN THREAD] Failed to create new msg connection handler thread, %s\n", strerror(errno));
 		#endif
 
 		exit(-4);
@@ -107,46 +115,112 @@ int main(int argc, char const *argv[])
 	ret = pthread_create(&client_id_cache_handler_thread, NULL, client_id_cache_handler, NULL);
 	if(ret != 0) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to create new msg connection handler thread, %s\n", strerror(errno));
+			fprintf(g_log_file, "[MAIN THREAD] Failed to create new msg connection handler thread, %s\n", strerror(errno));
 		#endif
 
 		exit(-4);
 	}
 
-	while(1) sleep(MAIN_THREAD_SLEEP_SEC);
+	n = 0;
+	one_sec_count = (USEC_PER_SEC/MAIN_THREAD_SLEEP_USEC);
+	while(1) {
+		usleep(MAIN_THREAD_SLEEP_USEC);
+
+		#ifdef ENABLE_BANDWIDTH_REPORTING_UI
+			handle_bandwidth_reporting();
+		#endif
+		if(n >= one_sec_count)  {
+			handle_logging();
+		}		
+
+		n++;
+		if(n >= one_sec_count) {
+			n = 0;
+		}
+	}
 
 	return 0;
 }
 
-void init_globals(void)
+void init_globals(int argc, char *argv[])
 {
-	client_msg_port = 0;
-	id_cache_port = 0; 
-	cert_request_port = 0;
-	max_uid = 0;
-	total_key_clash_backups = 0;
-	relay_id = NULL;
-	relay_id_len = -1;
+	int ret;
+
+	if(argv == NULL) {
+		exit(-1);
+	}
+
+	if(argc < 3) {
+		fprintf(stdout, "[MAIN THREAD] Usage: ./%s RELAY_ID PORT [LOGGING INTERVAL]\n", program_name);
+		exit(-1);
+	}
+
+	#ifdef LOG_TO_FILE_INSTEAD_OF_STDOUT
+		char buf[256];
+		sprintf(buf, "%s.log", argv[1]);
+		g_log_file = fopen(buf, "w");
+		if(g_log_file == NULL) {
+			exit(-1);
+		}
+	#else
+		g_log_file = stdout;
+	#endif
+
+	ret = get_hash_of_string("[MAIN THREAD]", RELAY_ID_HASH_COUNT, argv[1], &g_relay_id, &g_relay_id_len);
+	if(ret < 0) {
+		exit(-2);	
+	}
+	#ifdef ENABLE_LOGGING
+		fprintf(g_log_file, "[MAIN THREAD] Relay id=%s\n", g_relay_id);
+	#endif
+
+	g_client_msg_port = (unsigned int)atoi(argv[2]);
+	if(g_client_msg_port > PORT_MAX) {
+		fprintf(g_log_file, "[MAIN THREAD] Port number (%u) must be less than %u\n", g_client_msg_port, PORT_MAX);
+		exit(-5);
+	}
+	if(g_client_msg_port < PORT_MIN) {
+		fprintf(g_log_file, "[MAIN THREAD] Port number (%u) must be less than %u\n", g_client_msg_port, PORT_MIN);
+		exit(-5);
+	}
+	g_id_cache_port = g_client_msg_port + 1;
+	g_cert_request_port = g_client_msg_port + 2;
+
+	g_max_uid = 0;
+	g_total_key_clash_backups = 0;
 	rsa = NULL;
+
+	sem_init(&logging_sem, 0, 1);
+	memset(&g_logging_data, 0, sizeof(g_logging_data));
+
+	if(argc > 3) {
+		g_logging_interval = (unsigned int)atoi(argv[3]);
+		if(g_logging_interval > PER_WEEK) {
+			g_logging_interval = DEFAULT_LOGGING_INTERVAL;
+		}
+	} else {
+		g_logging_interval = DEFAULT_LOGGING_INTERVAL;
+	}
+	
 }
 
 int initialize_key_store(char *thread_id)
 {
 	int ret;
 
-	sem_init(&keystore_sem, 0 , 1);
+	sem_init(&keystore_sem, 0, 1);
 
 	#ifdef DEBUG_MODE
-		ret = init_key_store(thread_id, SOFT);
+		ret = init_key_store(thread_id, g_log_file, SOFT);
 	#else
-		ret = init_key_store(thread_id, HARD);
+		ret = init_key_store(thread_id, g_log_file, HARD);
 	#endif
 	if(ret < 0) {
 		return -1;
 	}
 
-	get_max_user_id(thread_id, &max_uid);
-	get_number_of_key_clash_backups(thread_id, &total_key_clash_backups);
+	get_max_user_id(thread_id, &g_max_uid);
+	get_number_of_key_clash_backups(thread_id, &g_total_key_clash_backups);
 
 	return 0;
 }
@@ -160,7 +234,7 @@ void *certificate_request_handler_thread(void *ptr)
 	char *public_key_buffer;
 
 	#ifdef ENABLE_THREAD_LOGGING
-		fprintf(stdout, "[CERTIFICATE REQUEST THREAD] Created certificate request handler thread\n");
+		fprintf(g_log_file, "[CERTIFICATE REQUEST THREAD] Created certificate request handler thread\n");
 	#endif
 
 	ret = load_public_key_into_buffer("[CERTIFICATE REQUEST THREAD]", &public_key_buffer, &public_key_buffer_len);
@@ -168,7 +242,7 @@ void *certificate_request_handler_thread(void *ptr)
 		exit(-2);
 	}
 
-	ret = init_listening_socket("[CERTIFICATE REQUEST THREAD]", cert_request_port, &certificate_request_listening_socket);
+	ret = init_listening_socket("[CERTIFICATE REQUEST THREAD]", g_cert_request_port, &certificate_request_listening_socket);
 	if(ret < 0) {
 		exit(-5);
 	}
@@ -179,20 +253,24 @@ void *certificate_request_handler_thread(void *ptr)
 		client_socket = accept(certificate_request_listening_socket, (struct sockaddr *)&client_addr, &sockaddr_len);
 		if(client_socket < 0) {
 			#ifdef ENABLE_THREAD_LOGGING
-				fprintf(stdout, "[CERTIFICATE REQUEST THREAD] Failed to accept client connection, %s\n", strerror(errno));
+				fprintf(g_log_file, "[CERTIFICATE REQUEST THREAD] Failed to accept client connection, %s\n", strerror(errno));
 			#endif
 
 			continue;
 		}
 		#ifdef ENABLE_THREAD_LOGGING
-			fprintf(stdout, "[CERTIFICATE REQUEST THREAD] %s:%d requested certificate\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+			fprintf(g_log_file, "[CERTIFICATE REQUEST THREAD] %s:%d requested certificate\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 		#endif
 
-		write(client_socket, &max_uid, sizeof(max_uid));
-		write(client_socket, relay_id, relay_id_len); // TODO check all bytes are sent
+		write(client_socket, &g_max_uid, sizeof(g_max_uid));
+		write(client_socket, g_relay_id, g_relay_id_len); // TODO check all bytes are sent
 		write(client_socket, public_key_buffer, public_key_buffer_len);
 		fsync(client_socket);
 		close(client_socket);
+
+		sem_wait(&logging_sem);
+		g_logging_data.num_cert_requests[g_logging_data.logging_index]++;
+		sem_post(&logging_sem);
 
 		usleep(CERT_REQUEST_SLEEP_US);
 	}
@@ -204,12 +282,12 @@ void *client_msg_new_connection_handler(void *ptr)
 	socklen_t sockaddr_len;
 	struct sockaddr_in client_addr;
 
-	ret = init_listening_socket("[MSG CONNECTION HANDLER THREAD]", client_msg_port, &listening_socket);
+	ret = init_listening_socket("[MSG CONNECTION HANDLER THREAD]", g_client_msg_port, &listening_socket);
 	if(ret < 0) {
 		exit(-5);
 	}
 	#ifdef ENABLE_THREAD_LOGGING
-		fprintf(stdout, "[MSG CONNECTION HANDLER THREAD] listening on port=%u\n", client_msg_port);
+		fprintf(g_log_file, "[MSG CONNECTION HANDLER THREAD] listening on port=%u\n", g_client_msg_port);
 	#endif	
 
 	while(1) {
@@ -218,16 +296,20 @@ void *client_msg_new_connection_handler(void *ptr)
 		client_socket = accept(listening_socket, (struct sockaddr *)&client_addr, &sockaddr_len);
 		if(client_socket < 0) {
 			#ifdef ENABLE_THREAD_LOGGING
-				fprintf(stdout, "[MSG CONNECTION HANDLER THREAD] Failed to accept client connection, %s\n", strerror(errno));
+				fprintf(g_log_file, "[MSG CONNECTION HANDLER THREAD] Failed to accept client connection, %s\n", strerror(errno));
 			#endif
 
 			continue;
 		}
 		#ifdef ENABLE_THREAD_LOGGING
-			fprintf(stdout, "[MSG CONNECTION HANDLER THREAD] %s:%d connected\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+			fprintf(g_log_file, "[MSG CONNECTION HANDLER THREAD] %s:%d connected\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 		#endif
 
 		add_new_thread_to_pool("[MSG CONNECTION HANDLER THREAD]", MSG_THREAD_POOL_INDEX, client_socket);
+
+		sem_wait(&logging_sem);
+		g_logging_data.total_num_of_relay_threads_created[g_logging_data.logging_index]++;
+		sem_post(&logging_sem);
 	}
 }
 
@@ -237,12 +319,12 @@ void *client_id_cache_handler(void *ptr)
 	socklen_t sockaddr_len;
 	struct sockaddr_in client_addr;
 
-	ret = init_listening_socket("[ID CACHE HANDLER THREAD]", id_cache_port, &listening_socket);
+	ret = init_listening_socket("[ID CACHE HANDLER THREAD]", g_id_cache_port, &listening_socket);
 	if(ret < 0) {
 		exit(-5);
 	}
 	#ifdef ENABLE_THREAD_LOGGING
-		fprintf(stdout, "[ID CACHE HANDLER THREAD] Listening on port=%u\n", id_cache_port);
+		fprintf(g_log_file, "[ID CACHE HANDLER THREAD] Listening on port=%u\n", g_id_cache_port);
 	#endif	
 
 	while(1) {
@@ -251,16 +333,20 @@ void *client_id_cache_handler(void *ptr)
 		client_socket = accept(listening_socket, (struct sockaddr *)&client_addr, &sockaddr_len);
 		if(client_socket < 0) {
 			#ifdef ENABLE_THREAD_LOGGING
-				fprintf(stdout, "[ID CACHE HANDLER THREAD] Failed to accept client connection, %s\n", strerror(errno));
+				fprintf(g_log_file, "[ID CACHE HANDLER THREAD] Failed to accept client connection, %s\n", strerror(errno));
 			#endif
 
 			continue;
 		}
 		#ifdef ENABLE_THREAD_LOGGING
-			fprintf(stdout, "[ID CACHE HANDLER THREAD] %s:%d connected\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+			fprintf(g_log_file, "[ID CACHE HANDLER THREAD] %s:%d connected\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 		#endif
 
 		add_new_thread_to_pool("[ID CACHE HANDLER THREAD]", USER_ID_CACHE_POOL_INDEX, client_socket);
+
+		sem_wait(&logging_sem);
+		g_logging_data.total_num_of_id_cache_threads_created[g_logging_data.logging_index]++;
+		sem_post(&logging_sem);
 
 		usleep(ID_CACHE_SLEEP_US);
 	}
@@ -271,19 +357,19 @@ int init_listening_socket(char *thread_id, unsigned int port, int *listening_soc
 	struct sockaddr_in serv_addr;
 
 	if(port > PORT_MAX) {
-		return -1;	
+		exit(1);
 	}
 	if(listening_socket == NULL) {
-		return -1;
+		exit(1);
 	}
 
 	*listening_socket = socket(AF_INET, SOCK_STREAM, 0);
 	if(*listening_socket < 0){
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "%s Failed to create stream socket\n", thread_id);
+			fprintf(g_log_file, "%s Failed to create stream socket\n", thread_id);
 		#endif
 
-		return -1;
+		exit(1);
 	}
 
 	bzero((char *) &serv_addr, sizeof(serv_addr));
@@ -292,10 +378,10 @@ int init_listening_socket(char *thread_id, unsigned int port, int *listening_soc
 	serv_addr.sin_port = htons(port);
 	if (bind(*listening_socket, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "%s Error on binding\n", thread_id);
+			fprintf(g_log_file, "%s Error on binding\n", thread_id);
 		#endif
 
-		return -1;
+		exit(1);
 	}
 	listen(*listening_socket, LISTEN_BACKLOG_MAX);	
 
@@ -315,7 +401,7 @@ int add_new_thread_to_pool(char *thread_id, int thread_pool_index, int client_so
 	sem_wait(&(thread_pools[thread_pool_index].ct_pool_sem));
 	if(thread_pools[thread_pool_index].num_active_client_threads >= thread_pools[thread_pool_index].thread_pool_length) {
 		#ifdef ENABLE_THREAD_LOGGING
-			fprintf(stdout, "%s Unable to accept new client socket connections as number of connections (%u) \
+			fprintf(g_log_file, "%s Unable to accept new client socket connections as number of connections (%u) \
 				has reached maximum allowed\n", thread_id, thread_pools[thread_pool_index].num_active_client_threads);
 		#endif
 
@@ -327,7 +413,7 @@ int add_new_thread_to_pool(char *thread_id, int thread_pool_index, int client_so
 	get_index_of_unused_thread_descriptor(thread_pools[thread_pool_index].cthread_pool, thread_pools[thread_pool_index].thread_pool_length, &unused_thread_index);
 	if(unused_thread_index == -1) {
 		#ifdef ENABLE_THREAD_LOGGING
-			fprintf(stdout, "%s Client thread pool reached maximum, rejecting client connection attempt\n", thread_id);
+			fprintf(g_log_file, "%s Client thread pool reached maximum, rejecting client connection attempt\n", thread_id);
 		#endif
 
 		close(client_socket);
@@ -340,7 +426,7 @@ int add_new_thread_to_pool(char *thread_id, int thread_pool_index, int client_so
 	ret = pthread_create(&(thread_pools[thread_pool_index].cthread_pool[unused_thread_index].thread_id), NULL, thread_pools[thread_pool_index].start_routine, thread_arg);
 	if(ret != 0) {
 		#ifdef ENABLE_THREAD_LOGGING
-			fprintf(stdout, "%s Failed to create client handler thread, %s\n", thread_id, strerror(errno));
+			fprintf(g_log_file, "%s Failed to create client handler thread, %s\n", thread_id, strerror(errno));
 		#endif
 
 		close(client_socket);
@@ -358,7 +444,7 @@ int add_new_thread_to_pool(char *thread_id, int thread_pool_index, int client_so
 	}
 	thread_pools[thread_pool_index].num_active_client_threads++;
 	#ifdef ENABLE_THREAD_LOGGING
-		fprintf(stdout, "%s New number of active client threads: %u\n", thread_id, thread_pools[thread_pool_index].num_active_client_threads);
+		fprintf(g_log_file, "%s New number of active client threads: %u\n", thread_id, thread_pools[thread_pool_index].num_active_client_threads);
 	#endif
 	sem_post(&(thread_pools[thread_pool_index].ct_pool_sem));
 
@@ -435,12 +521,11 @@ void *thread_pool_manager_thread_thread(void *ptr)
 	#ifdef ENABLE_THREAD_LOGGING
 		pthread_t self_thread_id;
 		self_thread_id = pthread_self();
-		fprintf(stdout, "[MANAGE CLIENT THREAD 0x%x] Created manage client thread\n", (unsigned int)self_thread_id);
+		fprintf(g_log_file, "[MANAGE CLIENT THREAD 0x%x] Created manage client thread\n", (unsigned int)self_thread_id);
 	#endif
 
 	while(1) {
-		sleep(5);
-
+		sleep(1);
 		for(i = 0; i < NUM_THREAD_POOLS; i++) {
 			sem_wait(&(thread_pools[i].ct_pool_sem));
 			ct_descript_node = thread_pools[i].last_ct;
@@ -449,14 +534,17 @@ void *thread_pool_manager_thread_thread(void *ptr)
 				#ifdef ENABLE_THREAD_LOGGING
 					char pool_id_buf[POOL_ID_LEN];
 					get_thread_pool_id_from_index(i, pool_id_buf);
-					fprintf(stdout, "[MANAGE CLIENT THREAD 0x%x] Found no client threads to manage for thread pool = %s\n", (unsigned int)self_thread_id, pool_id_buf);
+					fprintf(g_log_file, "[MANAGE CLIENT THREAD 0x%x] Found no client threads to manage for thread pool = %s\n", (unsigned int)self_thread_id, pool_id_buf);
 				#endif
 			} else {
 				while(ct_descript_node != NULL) {
+					if(ct_descript_node->thread_id == 0) { // TODO - something went wrong here
+						;
+					}
 					ret = pthread_tryjoin_np(ct_descript_node->thread_id, &res);
 					if(ret != 0) {
 						#ifdef ENABLE_THREAD_LOGGING
-							fprintf(stdout, "[MANAGE CLIENT THREAD 0x%x] Found client thread with id=0x%x still active\n", (unsigned int)self_thread_id, (unsigned int)ct_descript_node->thread_id);
+							fprintf(g_log_file, "[MANAGE CLIENT THREAD 0x%x] Found client thread with id=0x%x still active\n", (unsigned int)self_thread_id, (unsigned int)ct_descript_node->thread_id);
 						#endif
 
 						ct_descript_node->thread_age++; // TODO Cancel thread based upon CLIENT_HANDLER_THREAD_MAX_AGE
@@ -464,13 +552,21 @@ void *thread_pool_manager_thread_thread(void *ptr)
 						ct_descript_node = ct_descript_node->next;
 					} else {
 						#ifdef ENABLE_THREAD_LOGGING
-							fprintf(stdout, "[MANAGE CLIENT THREAD 0x%x] Joined with client thread with id=0x%x\n", (unsigned int)self_thread_id, (unsigned int)ct_descript_node->thread_id);
+							fprintf(g_log_file, "[MANAGE CLIENT THREAD 0x%x] Joined with client thread with id=0x%x\n", (unsigned int)self_thread_id, (unsigned int)ct_descript_node->thread_id);
 						#endif
 
 						if(ct_descript_node == thread_pools[i].first_ct) {
-							thread_pools[i].first_ct = NULL;
-						}
-						if (ct_descript_node == thread_pools[i].last_ct) {
+							if(ct_descript_node == thread_pools[i].last_ct) {
+								thread_pools[i].first_ct = NULL;
+								thread_pools[i].last_ct = NULL;
+							} else {
+								thread_pools[i].first_ct = ct_descript_node_prev;
+								thread_pools[i].first_ct->next = NULL;
+							}
+							ct_descript_node->thread_id = 0;
+							ct_descript_node->thread_age = -1;
+							ct_descript_node = NULL;
+						} else if (ct_descript_node == thread_pools[i].last_ct) {
 							thread_pools[i].last_ct = ct_descript_node->next;
 							ct_descript_node->thread_id = 0;
 							ct_descript_node->thread_age = -1;
@@ -481,12 +577,12 @@ void *thread_pool_manager_thread_thread(void *ptr)
 							ct_descript_node->thread_id = 0;
 							ct_descript_node->thread_age = -1;
 							ct_descript_node->next = NULL;
-							ct_descript_node = ct_descript_node_prev;
+							ct_descript_node = ct_descript_node_prev->next;
 						}
 						if(thread_pools[i].num_active_client_threads != 0) {
 							thread_pools[i].num_active_client_threads--;
 							#ifdef ENABLE_THREAD_LOGGING
-								fprintf(stdout, "[MSG CONNECTION HANDLER THREAD] New number of active client threads: %u\n", thread_pools[i].num_active_client_threads);
+								fprintf(g_log_file, "[MSG CONNECTION HANDLER THREAD] New number of active client threads: %u\n", thread_pools[i].num_active_client_threads);
 							#endif
 						}
 						free(res);
@@ -519,7 +615,7 @@ void *handle_msg_client_thread(void *ptr)
 	self_thread_id = pthread_self();
 	sprintf(thread_id_buf, "[MSG CLIENT THREAD 0x%x]", (unsigned int)self_thread_id);
 	#ifdef ENABLE_THREAD_LOGGING
-		fprintf(stdout, "%s Created new client thread\n", thread_id_buf);
+		fprintf(g_log_file, "%s Created new client thread\n", thread_id_buf);
 	#endif
 
 	if(ptr == NULL) {
@@ -536,72 +632,127 @@ void *handle_msg_client_thread(void *ptr)
 	}
 	handle_pthread_bytesread(bytes_read, client_socket);
 	#ifdef PRINT_PACKETS
-		fprintf(stdout, "\n ------------------------------------------------------------ \n\n");
+		fprintf(g_log_file, "\n ------------------------------------------------------------ \n\n");
 		for (i = 0; i < packet_size_bytes; ++i) {
-			fprintf(stdout, "%02x", packet_data_encrypted[i]);
+			fprintf(g_log_file, "%02x", packet_data_encrypted[i]);
 		}
-		fprintf(stdout, "\n\n ------------------------------------------------------------ \n");
+		fprintf(g_log_file, "\n\n ------------------------------------------------------------ \n");
 	#endif
 
-	// TODO key storage semaphore?
+	sem_wait(&keystore_sem);
 	
 	or_data_ptr = (onion_route_data *)packet_data_encrypted;
 	or_data_decrypted_ptr = (onion_route_data *)packet_data_decrypted;
 
-	for (i = -1; i < (int)total_key_clash_backups; ++i) {
+	for (i = -1; i < (int)g_total_key_clash_backups; ++i) {
 		ret = get_key_for_user_id(thread_id_buf, or_data_ptr->uid, i, &ke_entry);
-		handle_pthread_ret(thread_id_buf, ret, client_socket);
-		if(ke_entry.age < 0) {
+		if((ret < 0) || ((i == -1) && (ke_entry.age == 0))) {
+			sem_post(&keystore_sem);
+			close(client_socket);
+			sem_wait(&logging_sem);
+			g_logging_data.num_key_get_failures[g_logging_data.logging_index]++;
+			fprintf(stdout, "KF_OD_I: %u\n", or_data_ptr->uid);
+			sem_post(&logging_sem);
+			handle_pthread_ret(thread_id_buf, -5);
+		} 
+		if(((~key_clash_tag) & ke_entry.age) == 0) {
 			continue;
 		}
-		// TODO - If succeeded and i != -1 need to swap current mapping to RAM
 
 		ret = aes_decrypt_block(thread_id_buf, (unsigned char *)&(or_data_ptr->ord_enc), (payload_start_byte - cipher_text_byte_offset), 
 									(unsigned char *)ke_entry.p_key.value, AES_KEY_SIZE_BYTES, or_data_ptr->iv, (packet_data_decrypted + cipher_text_byte_offset));
-		handle_pthread_ret(thread_id_buf, ret, client_socket);
+		if(ret < 0) {
+			sem_post(&keystore_sem);
+			close(client_socket);
+			handle_pthread_ret(thread_id_buf, ret);
+		}
 
 		get_ord_packet_checksum(&(or_data_decrypted_ptr->ord_enc), &ord_checksum);
 		if(ord_checksum == 0) {
+			// TODO - If succeeded and i != -1 need to swap current mapping to RAM
 			break;
 		}
 	}
-	if(i >= (int)total_key_clash_backups) {
-		handle_pthread_ret(thread_id_buf, -5, client_socket);
+	if(i >= (int)g_total_key_clash_backups) {
+		sem_post(&keystore_sem);
+		close(client_socket);
+		sem_wait(&logging_sem);
+		g_logging_data.num_key_get_failures[g_logging_data.logging_index]++;
+		fprintf(stdout, "KF_OD: %u\n", or_data_ptr->uid);
+		sem_post(&logging_sem);
+		handle_pthread_ret(thread_id_buf, -5);
 	}
 
-	remove_currently_mapped_key_from_key_store(thread_id_buf);
+	remove_key_from_key_store(thread_id_buf, or_data_ptr->uid, i);
 	ret = set_key_for_user_id(thread_id_buf, or_data_decrypted_ptr->ord_enc.new_uid, (key *)&(or_data_decrypted_ptr->ord_enc.new_key));
-	handle_pthread_ret(thread_id_buf, ret, client_socket);
+	if(ret < 0) {
+		sem_post(&keystore_sem);
+		close(client_socket);
+		handle_pthread_ret(thread_id_buf, ret);
+	}
+	#ifdef RECORD_UIDS
+		fprintf(fp_set_uids, "%u,\n", or_data_decrypted_ptr->ord_enc.new_uid);
+	#endif
 
 	or_payload_data_ptr = (onion_route_data *)(packet_data_encrypted + payload_start_byte);
 	or_payload_data_decrypted_ptr = (onion_route_data *)payload_data_decrypted;
 
-	for (i = -1; i < (int)total_key_clash_backups; ++i) {
+	for (i = -1; i < (int)g_total_key_clash_backups; ++i) {
 		ret = get_key_for_user_id(thread_id_buf, or_payload_data_ptr->uid, i, &ke_entry);
-		handle_pthread_ret(thread_id_buf, ret, client_socket);
-		if(ke_entry.age < 0) {
+		if((ret < 0) || ((i == -1) && (ke_entry.age == 0))) {
+			sem_post(&keystore_sem);
+			close(client_socket);
+			sem_wait(&logging_sem);
+			g_logging_data.num_key_get_failures[g_logging_data.logging_index]++;
+			fprintf(stdout, "KF_PD_I: %u\n", or_payload_data_ptr->uid);
+			sem_post(&logging_sem);
+			handle_pthread_ret(thread_id_buf, -5);
+		} 
+		if(((~key_clash_tag) & ke_entry.age) == 0) {
 			continue;
 		}
 
 		ret = aes_decrypt_block(thread_id_buf, (unsigned char *)&(or_payload_data_ptr->ord_enc), (packet_size_bytes - payload_start_byte - cipher_text_byte_offset), 
 									(unsigned char *)ke_entry.p_key.value, AES_KEY_SIZE_BYTES, or_payload_data_ptr->iv, (payload_data_decrypted + cipher_text_byte_offset));
-		handle_pthread_ret(thread_id_buf, ret, client_socket);
+		if(ret < 0) {
+			sem_post(&keystore_sem);
+			close(client_socket);
+			handle_pthread_ret(thread_id_buf, ret);
+		}
 
 		get_ord_packet_checksum(&(or_payload_data_decrypted_ptr->ord_enc), &ord_checksum);
 		if(ord_checksum == 0) {
 			break;
 		}
 	}
-	if(i >= (int)total_key_clash_backups) {
-		handle_pthread_ret(thread_id_buf, -5, client_socket);
+	if(i >= (int)g_total_key_clash_backups) {
+		sem_post(&keystore_sem);
+		close(client_socket);
+		sem_wait(&logging_sem);
+		g_logging_data.num_key_get_failures[g_logging_data.logging_index]++;
+		fprintf(stdout, "KF_PD: %u\n", or_payload_data_ptr->uid);
+		sem_post(&logging_sem);
+		handle_pthread_ret(thread_id_buf, -5);
 	}
 
-	remove_currently_mapped_key_from_key_store(thread_id_buf);
+	remove_key_from_key_store(thread_id_buf, or_payload_data_ptr->uid, i);
 	ret = set_key_for_user_id(thread_id_buf, or_payload_data_decrypted_ptr->ord_enc.new_uid, (key *)&(or_payload_data_decrypted_ptr->ord_enc.new_key));
-	handle_pthread_ret(thread_id_buf, ret, client_socket);
+	if(ret < 0) {
+		sem_post(&keystore_sem);
+		close(client_socket);
+		handle_pthread_ret(thread_id_buf, ret);
+	}
+	#ifdef RECORD_UIDS
+		fprintf(fp_set_uids, "%u,\n", or_payload_data_decrypted_ptr->ord_enc.new_uid);
+	#endif
+
+	sem_post(&keystore_sem);
 	
 	ret = fill_buf_with_random_data(packet_data, packet_size_bytes);
-	handle_pthread_ret(thread_id_buf, ret, client_socket);
+	if(ret < 0) {
+		close(client_socket);
+		handle_pthread_ret(thread_id_buf, ret);
+	}
 	memcpy(packet_data, (packet_data_decrypted + sizeof(onion_route_data)), (sizeof(onion_route_data) * 2));
 	memcpy((packet_data + payload_start_byte), (payload_data_decrypted + sizeof(onion_route_data)), (packet_size_bytes - payload_start_byte - sizeof(onion_route_data)));
 
@@ -609,19 +760,32 @@ void *handle_msg_client_thread(void *ptr)
 		pd_ptr = (payload_data *)(packet_data + payload_start_byte);
 
 		handle_non_route_packet(thread_id_buf, pd_ptr);
+
+		sem_wait(&logging_sem);
+		g_logging_data.num_non_relay_packets[g_logging_data.logging_index]++;
+		g_logging_data.total_num_of_relay_threads_destroyed[g_logging_data.logging_index]++;
+		sem_post(&logging_sem);
+
+		num_relay_packets_bandwidth_report += 1;
 	} else {
 		next_addr.s_addr = or_data_decrypted_ptr->ord_enc.next_pkg_ip;
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "%s Found next ip = %s, port = %u\n", thread_id_buf, inet_ntoa(next_addr), or_data_decrypted_ptr->ord_enc.next_pkg_port);
+			fprintf(g_log_file, "%s Found next ip = %s, port = %u\n", thread_id_buf, inet_ntoa(next_addr), or_data_decrypted_ptr->ord_enc.next_pkg_port);
 		#endif
 
 		send_packet_to_relay(packet_data, inet_ntoa(next_addr), or_data_decrypted_ptr->ord_enc.next_pkg_port);
+
+		sem_wait(&logging_sem);
+		g_logging_data.num_relay_packets[g_logging_data.logging_index]++;
+		g_logging_data.total_num_of_relay_threads_destroyed[g_logging_data.logging_index]++;
+		sem_post(&logging_sem);
+
+		num_relay_packets_bandwidth_report += 2;
 	}
 
 	#ifdef ENABLE_THREAD_LOGGING
-		fprintf(stdout, "%s Client thread exit\n", thread_id_buf);
+		fprintf(g_log_file, "%s Client thread exit\n", thread_id_buf);
 	#endif
-
 	close(client_socket);
 	pthread_ret = (char *)0;
 	pthread_exit(pthread_ret);
@@ -637,14 +801,14 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 	switch(pd_ptr->type) {
 		case DUMMY_PACKET_NO_RETURN_ROUTE:
 			#ifdef ENABLE_LOGGING
-				fprintf(stdout, "%s Received non-route packet, type = %s. Dropping packet\n", thread_id, get_string_for_payload_type(pd_ptr->type));
+				fprintf(g_log_file, "%s Received non-route packet, type = %s. Dropping packet\n", thread_id, get_string_for_payload_type(pd_ptr->type));
 			#endif	
 		break;
 		case DUMMY_PACKET_W_RETURN_ROUTE:
 			next_addr.s_addr = (((uint64_t)pd_ptr->client_id) << 32) | ((uint64_t)pd_ptr->conversation_id);
 			next_port = pd_ptr->onion_r1;
 			#ifdef ENABLE_LOGGING
-				fprintf(stdout, "%s Received non-route packet, type = %s. Next ip = %s, port = %u\n", thread_id, get_string_for_payload_type(pd_ptr->type), inet_ntoa(next_addr), next_port);
+				fprintf(g_log_file, "%s Received non-route packet, type = %s. Next ip = %s, port = %u\n", thread_id, get_string_for_payload_type(pd_ptr->type), inet_ntoa(next_addr), next_port);
 			#endif
 
 			ret = fill_buf_with_random_data(packet_data, packet_size_bytes);
@@ -673,12 +837,12 @@ void *handle_id_cache_thread(void *ptr)
 	self_thread_id = pthread_self();
 	sprintf(buf, "[ID CACHE CLIENT THREAD 0x%x]", (unsigned int)self_thread_id);
 	#ifdef ENABLE_THREAD_LOGGING
-		fprintf(stdout, "%s Created new client thread\n", buf);
+		fprintf(g_log_file, "%s Created new client thread\n", buf);
 	#endif
 
 	if(ptr == NULL) {
 		#ifdef ENABLE_THREAD_LOGGING
-			fprintf(stdout, "%s Handle client thread created with null arguments\n", buf);
+			fprintf(g_log_file, "%s Handle client thread created with null arguments\n", buf);
 		#endif
 
 		pthread_ret = (char *)-1;
@@ -694,17 +858,17 @@ void *handle_id_cache_thread(void *ptr)
 	}
 	handle_pthread_bytesread(bytes_read, client_socket);
 	#ifdef PRINT_PACKETS
-		fprintf(stdout, "\n ------------------------------------------------------------ \n\n");
+		fprintf(g_log_file, "\n ------------------------------------------------------------ \n\n");
 		for (i = 0; i < packet_size_bytes; ++i) {
-			fprintf(stdout, "%02x", packet_data_encrypted[i]);
+			fprintf(g_log_file, "%02x", packet_data_encrypted[i]);
 		}
-		fprintf(stdout, "\n\n ------------------------------------------------------------ \n");
+		fprintf(g_log_file, "\n\n ------------------------------------------------------------ \n");
 	#endif
 	
 	RSA_private_decrypt(RSA_KEY_LENGTH_BYTES, (packet_data_encrypted + payload_start_byte), packet_data, rsa, RSA_PKCS1_OAEP_PADDING);
 	id_data = ((id_cache_data *)packet_data);
 	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "%s Received id cache data\n", buf);
+		fprintf(g_log_file, "%s Received id cache data\n", buf);
 	#endif
 
 	sem_wait(&keystore_sem);
@@ -714,8 +878,13 @@ void *handle_id_cache_thread(void *ptr)
 	set_key_for_user_id(buf, id_data->return_route_payload_user_id, (key *)id_data->return_route_payload_aes_key);
 	sem_post(&keystore_sem);
 
+	sem_wait(&logging_sem);
+	g_logging_data.num_id_cache_packets[g_logging_data.logging_index]++;
+	g_logging_data.total_num_of_id_cache_threads_destroyed[g_logging_data.logging_index]++;
+	sem_post(&logging_sem);
+
 	#ifdef ENABLE_THREAD_LOGGING
-		fprintf(stdout, "%s Client thread exit\n", buf);
+		fprintf(g_log_file, "%s Client thread exit\n", buf);
 	#endif
 
 	// TODO need to prevent flood of new keys from non relay client! Make sure only 1 packet / 3 sec from same IP
@@ -735,7 +904,7 @@ int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destin
 	cr_socket = socket(AF_INET, SOCK_STREAM, 0);
 	if(cr_socket < 0){
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to create stream socket\n");
+			fprintf(g_log_file, "[MAIN THREAD] Failed to create stream socket\n");
 		#endif
 
 		return -1;
@@ -747,7 +916,7 @@ int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destin
 	bzero((char *) &client_addr, sizeof(client_addr));
 	client_addr.sin_family = AF_INET;
 	for(i = 0; i < NUM_BIND_ATTEMPTS; i++) {
-		initial_seed_value = (((unsigned int)relay_id[1])<<24) | (((unsigned int)relay_id[3])<<16) | (((unsigned int)relay_id[0])<<8) | ((unsigned int)relay_id[2]);
+		initial_seed_value = (((unsigned int)g_relay_id[1])<<24) | (((unsigned int)g_relay_id[3])<<16) | (((unsigned int)g_relay_id[0])<<8) | ((unsigned int)g_relay_id[2]);
 		source_port = get_random_number(initial_seed_value);
 		source_port %= 65535;
 		if(source_port < 16384)
@@ -768,7 +937,7 @@ int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destin
 	ret = connect(cr_socket, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
 	if(ret != 0){
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to connect to relay with ip = %s\n", destination_ip);
+			fprintf(g_log_file, "[MAIN THREAD] Failed to connect to relay with ip = %s\n", destination_ip);
 		#endif
 
 		return -1;
@@ -822,25 +991,24 @@ void print_ret_code(char *thread_id, int ret)
 {
 	#ifdef ENABLE_LOGGING
 		if(ret == -5) {
-			fprintf(stdout, "%s Failed to retrieve key\n", thread_id);
+			fprintf(g_log_file, "%s Failed to retrieve key\n", thread_id);
 		} else if (ret < 0) {
-			fprintf(stdout, "%s Generic thread error\n", thread_id);
+			fprintf(g_log_file, "%s Generic thread error\n", thread_id);
 		}
 	#endif
 }
 
-void handle_pthread_ret(char *thread_id, int ret, int clientfd)
+void handle_pthread_ret(char *thread_id, int ret)
 {
 	char *pthread_ret;
 
-	if(ret < 0) {
-		print_ret_code(thread_id, ret);
-		if(clientfd >= 0) {
-			close(clientfd);
-		}
-		pthread_ret = (char *)0;
-		pthread_exit(pthread_ret);
-	}
+	sem_wait(&logging_sem);
+	g_logging_data.total_num_of_relay_threads_destroyed[g_logging_data.logging_index]++;
+	sem_post(&logging_sem);
+
+	print_ret_code(thread_id, ret);
+	pthread_ret = (char *)0;
+	pthread_exit(pthread_ret);
 }
 
 void handle_pthread_bytesread(int bytes_read, int clientfd)
@@ -852,4 +1020,180 @@ void handle_pthread_bytesread(int bytes_read, int clientfd)
 		pthread_ret = (char *)0;
 		pthread_exit(pthread_ret);
 	}
+}
+
+void update_amount_of_keys_used_for_logging(void)
+{
+	unsigned long tmp;
+
+	get_current_amount_of_keys_used(&tmp);
+
+	g_logging_data.percentage_of_keystore_used[g_logging_data.logging_index] = ((float)tmp/(float)g_max_uid) * 100.0;
+}
+
+__attribute__((unused)) void handle_bandwidth_reporting(void)
+{
+	static float average_bandwidth[((USEC_PER_SEC/MAIN_THREAD_SLEEP_USEC) * 3)];
+	static unsigned int average_bandwidth_index = 0;
+	static unsigned int prev_num_relay_packets_bandwidth_report = 0;
+	unsigned int num_packets_relayed, i;
+	float bandwidth, average_bandwidth_reporting;
+
+	if(prev_num_relay_packets_bandwidth_report > num_relay_packets_bandwidth_report) {
+		num_packets_relayed = num_relay_packets_bandwidth_report + (UINT_MAX - prev_num_relay_packets_bandwidth_report);
+	} else {
+		num_packets_relayed = num_relay_packets_bandwidth_report - prev_num_relay_packets_bandwidth_report;
+	}
+	prev_num_relay_packets_bandwidth_report = num_relay_packets_bandwidth_report;
+
+	bandwidth = ((float)packet_size_bytes * (float)num_packets_relayed) * (float)(USEC_PER_SEC/MAIN_THREAD_SLEEP_USEC);
+	bandwidth /= 1000.0;
+
+	average_bandwidth[average_bandwidth_index] = bandwidth;
+	average_bandwidth_index++;
+	if(average_bandwidth_index >= sizeof(average_bandwidth)/sizeof(average_bandwidth[0])) {
+		average_bandwidth_index = 0;
+	}
+
+	average_bandwidth_reporting = 0;
+	for (i = 0; i < sizeof(average_bandwidth)/sizeof(average_bandwidth[0]); ++i) {
+		average_bandwidth_reporting += average_bandwidth[i];
+	}
+	average_bandwidth_reporting /= (float)(sizeof(average_bandwidth)/sizeof(average_bandwidth[0]));
+
+	fprintf(stdout, "\33[2K\r");
+	fprintf(stdout, "%.2f kB/s ", average_bandwidth_reporting);
+	for (i = 0; i < (unsigned int)bandwidth; i+=10) {
+		fprintf(stdout, "-");
+	}
+	fflush(stdout);
+}
+
+void handle_logging(void)
+{
+	static unsigned int interval_count = 0;
+	int perform_logging_shift;
+
+	perform_logging_shift = 0;
+	interval_count++;
+	switch(g_logging_interval) {
+		case PER_SECOND:
+			interval_count = 0;
+			perform_logging_shift = 1;
+		break;
+		case PER_MINUTE:
+			if((interval_count % 60) == 0) {
+				interval_count = 0;
+				perform_logging_shift = 1;
+			}
+		break;
+		case PER_FIVE_MINUTES:
+			if((interval_count % 300) == 0) {
+				interval_count = 0;
+				perform_logging_shift = 1;
+			}
+		break;
+		case PER_TEN_MINUTES:
+			if((interval_count % 600) == 0) {
+				interval_count = 0;
+				perform_logging_shift = 1;
+			}
+		break;
+		case PER_FIFTEEN_MINUTES:
+			if((interval_count % 900) == 0) {
+				interval_count = 0;
+				perform_logging_shift = 1;
+			}
+		break;
+		case PER_THIRTY_MINUTES:
+			if((interval_count % 1800) == 0) {
+				interval_count = 0;
+				perform_logging_shift = 1;
+			}
+		break;
+		case PER_HOUR:
+			if((interval_count % 3600) == 0) {
+				interval_count = 0;
+				perform_logging_shift = 1;
+			}
+		break;
+		case PER_DAY:
+			if((interval_count % 86400) == 0) {
+				interval_count = 0;
+				perform_logging_shift = 1;
+			}
+		break;
+		case PER_WEEK:
+			if((interval_count % 604800) == 0) {
+				interval_count = 0;
+				perform_logging_shift = 1;
+			}
+		break;
+	}
+
+	if(perform_logging_shift) {
+		sem_wait(&logging_sem);
+		update_amount_of_keys_used_for_logging();
+		g_logging_data.new_logging_data_available = 1;
+		g_logging_data.logging_index_valid[g_logging_data.logging_index] = 1;
+		g_logging_data.logging_index++;
+		if(g_logging_data.logging_index >= LOGGING_DATA_LEN) {
+			g_logging_data.logging_index = 0;
+		}
+		g_logging_data.logging_index_valid[g_logging_data.logging_index] = 0;
+		g_logging_data.num_cert_requests[g_logging_data.logging_index] = 0;
+		g_logging_data.num_id_cache_packets[g_logging_data.logging_index] = 0;
+		g_logging_data.num_relay_packets[g_logging_data.logging_index] = 0;
+		g_logging_data.num_non_relay_packets[g_logging_data.logging_index] = 0;
+		g_logging_data.percentage_of_keystore_used[g_logging_data.logging_index] = 0;
+		g_logging_data.num_key_get_failures[g_logging_data.logging_index] = 0;
+		g_logging_data.total_num_of_id_cache_threads_created[g_logging_data.logging_index] = 0;
+		g_logging_data.total_num_of_relay_threads_created[g_logging_data.logging_index] = 0;
+		g_logging_data.total_num_of_id_cache_threads_destroyed[g_logging_data.logging_index] = 0;
+		g_logging_data.total_num_of_relay_threads_destroyed[g_logging_data.logging_index] = 0;
+		sem_post(&logging_sem);
+	}
+}
+
+void log_data_to_file(int dummy)
+{
+	FILE *fp;
+	int curr_log_index;
+
+	if(g_logging_data.new_logging_data_available == 0) {
+		return;
+	}
+
+	fp = fopen(log_file, "w");
+	if(fp == NULL) {
+		return;
+	}
+
+	sem_wait(&logging_sem);
+	g_logging_data.new_logging_data_available = 0;
+	curr_log_index = g_logging_data.logging_index + 1;
+	if(g_logging_data.logging_index >= LOGGING_DATA_LEN) {
+		curr_log_index = 0;
+	}
+	while(curr_log_index != g_logging_data.logging_index) {
+		if(g_logging_data.logging_index_valid[curr_log_index]) {
+			fprintf(fp, "%lu, %lu, %lu, %lu, %f, %lu, %lu, %lu, %lu, %lu\n", g_logging_data.num_cert_requests[curr_log_index], g_logging_data.num_id_cache_packets[curr_log_index], 
+						g_logging_data.num_relay_packets[curr_log_index], g_logging_data.num_non_relay_packets[curr_log_index], g_logging_data.percentage_of_keystore_used[curr_log_index], 
+						g_logging_data.num_key_get_failures[curr_log_index], g_logging_data.total_num_of_id_cache_threads_created[curr_log_index], g_logging_data.total_num_of_id_cache_threads_destroyed[curr_log_index],
+								g_logging_data.total_num_of_relay_threads_created[curr_log_index], g_logging_data.total_num_of_relay_threads_destroyed[curr_log_index]);
+		}
+		curr_log_index++;
+		if(curr_log_index >= LOGGING_DATA_LEN) {
+			curr_log_index = 0;
+		}
+	}
+	sem_post(&logging_sem);
+
+	fclose(fp);
+}
+
+void log_data_to_file_and_exit(int dummy)
+{
+	log_data_to_file(0);
+	exit(0);
 }

@@ -1,6 +1,6 @@
 #include "cryptography.h"
 
-#define ENABLE_LOGGING
+//#define ENABLE_LOGGING
 
 static int added_all_algorithms = 0;
 
@@ -540,14 +540,18 @@ int get_random_number(unsigned int initial_seed)
 {
 	unsigned int seed, rand_val;
 	FILE* dev_urandom;
+	struct timeval tv;
 
-	dev_urandom = fopen("/dev/urandom", "r");
+	gettimeofday(&tv, NULL);
+	dev_urandom = fopen("/dev/urandom", "r"); // TODO try multiple times!
 	if(dev_urandom == NULL) {
 		seed = initial_seed ^ (unsigned int)time(NULL);
+		seed ^= (unsigned int)tv.tv_usec;
 	} else {
 		fread(&seed, sizeof(unsigned int), 1, dev_urandom);
 		seed ^= initial_seed;
 		seed ^= (unsigned int)time(NULL);
+		seed ^= (unsigned int)tv.tv_usec;
 		fclose(dev_urandom);
 	}
 

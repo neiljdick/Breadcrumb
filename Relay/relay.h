@@ -13,6 +13,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <semaphore.h>
+#include <signal.h>
+#include <limits.h>
 
 #include "../Shared/key_storage.h"
 #include "../Shared/cryptography.h"
@@ -20,15 +22,22 @@
 
 const char *program_name = "Relay";
 
+const char *log_file = "relay_log.csv";
+
 const char *msg_handler_str 		= "MSG HANDLER";
 const char *id_cache_handler_str 	= "ID CACHE HANDLER";
 const char *unknown_str 			= "UNKNOWN";
 
 #define POOL_ID_LEN 					(64)
 
-#define PORT_MAX 						(65533)
+#ifndef PORT_MAX
+	#define PORT_MAX 							(65533)
+#endif
+#ifndef PORT_MIN
+	#define PORT_MIN 							(16384)
+#endif
 #define LISTEN_BACKLOG_MAX 				(50)
-#define MAX_PACKET_TRANSMIT_DELAY_USEC	(250000) // TODO determine experimentally?
+#define MAX_PACKET_TRANSMIT_DELAY_USEC	(200000) // TODO determine experimentally?
 
 #define NUM_MSG_HANDLER_THREADS 		(500)
 #define MSG_HANDLER_THREAD_MAX_AGE 		(5)
@@ -42,13 +51,17 @@ const char *unknown_str 			= "UNKNOWN";
 #define MSG_THREAD_POOL_INDEX			(0)
 #define USER_ID_CACHE_POOL_INDEX		(1)
 
-#define MAIN_THREAD_SLEEP_SEC 			(10)
+#define USEC_PER_SEC 					(1000000)
+#define MAIN_THREAD_SLEEP_USEC 			(200000)
 #define CERT_REQUEST_SLEEP_US 			(50000)
 #define ID_CACHE_SLEEP_US 				(50000)
 
 #define NUM_READ_ATTEMPTS 				(5)
 #define NUM_BIND_ATTEMPTS 				(5)
 #define MAX_SEND_ATTEMPTS 				(5)
+
+#define DEFAULT_LOGGING_INTERVAL 		(PER_HOUR)
+#define LOGGING_DATA_LEN 				(360)
 
 typedef struct client_thread_description
 {
@@ -68,6 +81,36 @@ typedef struct thread_pool
 	client_thread_description *first_ct, *last_ct;
 	unsigned int num_active_client_threads;
 } thread_pool;
+
+typedef enum 
+{
+	PER_SECOND				= 0,
+	PER_MINUTE,
+	PER_FIVE_MINUTES,
+	PER_TEN_MINUTES,
+	PER_FIFTEEN_MINUTES,
+	PER_THIRTY_MINUTES,
+	PER_HOUR,
+	PER_DAY,
+	PER_WEEK
+} logging_interval;
+
+typedef struct
+{
+	unsigned int logging_index;
+	unsigned int new_logging_data_available;
+	unsigned long logging_index_valid[LOGGING_DATA_LEN];
+	unsigned long num_cert_requests[LOGGING_DATA_LEN];
+	unsigned long num_id_cache_packets[LOGGING_DATA_LEN];
+	unsigned long num_relay_packets[LOGGING_DATA_LEN];
+	unsigned long num_non_relay_packets[LOGGING_DATA_LEN];
+	float percentage_of_keystore_used[LOGGING_DATA_LEN];
+	unsigned long num_key_get_failures[LOGGING_DATA_LEN];
+	unsigned long total_num_of_id_cache_threads_created[LOGGING_DATA_LEN];
+	unsigned long total_num_of_relay_threads_created[LOGGING_DATA_LEN];
+	unsigned long total_num_of_id_cache_threads_destroyed[LOGGING_DATA_LEN];
+	unsigned long total_num_of_relay_threads_destroyed[LOGGING_DATA_LEN];
+} logging_data;
 
 int initialize_key_store(char *thread_id);
 int init_listening_socket(char *thread_id, unsigned int port, int *listening_socket /* out */);

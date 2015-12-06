@@ -33,6 +33,7 @@
 
 #define MAX_KEY_ENTRY_AGE 					(20) // TODO determine experimentally?
 
+extern const uint8_t key_clash_tag;
 extern const unsigned char *key_storage_dir;
 
 typedef enum 
@@ -49,23 +50,20 @@ typedef struct key
 typedef struct key_entry
 {
 	key p_key;
-	int8_t age;
+	uint8_t age;
 } key_entry;
 
-int init_key_store(char *thread_id, init_type i_type);
+int init_key_store(char *thread_id, FILE *log_file, init_type i_type);
 int shutdown_key_store(char *thread_id);
 
 int remove_key_from_key_store(char *thread_id, unsigned int user_id, int backup_index);
-int remove_currently_mapped_key_from_key_store(char *thread_id);
 int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in);
 int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index, key_entry *ke_out /* out */);
 int get_free_ram_in_mb(char *thread_id, unsigned long *ram_free_mb);
 int get_free_disk_space_in_mb(char *thread_id, unsigned long *disk_free_mb);
-int swap_current_mapping_to_ram(char *thread_id);
 int get_number_of_key_clash_backups(char *thread_id, unsigned int *total_key_clash_backups);
 int handle_key_entry_age_increment(char *thread_id);
 int get_max_user_id(char *thread_id, unsigned int *max_uid);
-
-int timeval_subtract(struct timeval *result, struct timeval *x, struct timeval *y);
+int get_current_amount_of_keys_used(unsigned long *num_keys_used);
 
 #endif
