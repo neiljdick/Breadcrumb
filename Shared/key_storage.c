@@ -279,6 +279,9 @@ int handle_key_entry_age_increment(char *thread_id)
 
 	gettimeofday(&t1, NULL);
 
+	if(g_prev_key_age_inc >= g_max_user_id) {
+		g_prev_key_age_inc = 0;
+	}
 	ke_ptr = (g_key_store + g_prev_key_age_inc);
 	for (i = g_prev_key_age_inc; i < g_max_user_id; i++) {
 		if(ke_ptr->age != 0) {
