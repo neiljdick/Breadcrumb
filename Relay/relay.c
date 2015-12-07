@@ -129,11 +129,14 @@ int main(int argc, char *argv[])
 		#ifdef ENABLE_BANDWIDTH_REPORTING_UI
 			handle_bandwidth_reporting();
 		#endif
+			
+		n++;
 		if(n >= one_sec_count)  {
 			handle_logging();
+			sem_wait(&keystore_sem);
+			handle_key_entry_age_increment("[MAIN THREAD]");
+			sem_post(&keystore_sem);
 		}		
-
-		n++;
 		if(n >= one_sec_count) {
 			n = 0;
 		}
@@ -1046,7 +1049,7 @@ __attribute__((unused)) void handle_bandwidth_reporting(void)
 	}
 	prev_num_relay_packets_bandwidth_report = num_relay_packets_bandwidth_report;
 
-	bandwidth = ((float)packet_size_bytes * (float)num_packets_relayed) * (float)(USEC_PER_SEC/MAIN_THREAD_SLEEP_USEC);
+	bandwidth = (((float)packet_size_bytes + (float)TCP_BYTES_OVERHEAD) * (float)num_packets_relayed) * (float)(USEC_PER_SEC/MAIN_THREAD_SLEEP_USEC);
 	bandwidth /= 1000.0;
 
 	average_bandwidth[average_bandwidth_index] = bandwidth;
@@ -1061,8 +1064,8 @@ __attribute__((unused)) void handle_bandwidth_reporting(void)
 	}
 	average_bandwidth_reporting /= (float)(sizeof(average_bandwidth)/sizeof(average_bandwidth[0]));
 
-	fprintf(stdout, "\33[2K\r");
-	fprintf(stdout, "%.2f kB/s ", average_bandwidth_reporting);
+	fprintf(stdout, "%c[2K", 27);
+	fprintf(stdout, "\r%.2f kB/s ", average_bandwidth_reporting);
 	for (i = 0; i < (unsigned int)bandwidth; i+=10) {
 		fprintf(stdout, "-");
 	}

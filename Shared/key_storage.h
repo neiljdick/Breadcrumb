@@ -17,6 +17,7 @@
 #include <sys/time.h>
 
 #include "utils.h"
+#include "cryptography.h"
 
 #define MAX_KEY_CLASH_PERMITTED 			(4)
 
@@ -31,7 +32,8 @@
 #define DEFAULT_DISK_FREE_MB 				(1000)
 #define MAX_DISK_UTILIZATION_RATIO			(0.2)
 
-#define MAX_KEY_ENTRY_AGE 					(20) // TODO determine experimentally?
+#define MAX_KEY_ENTRY_AGE 					(20) 		// TODO determine experimentally?
+#define MAX_TIME_FOR_KEY_INCREMENT_USEC 	(10000) 	// TODO determine experimentally?
 
 extern const uint8_t key_clash_tag;
 extern const unsigned char *key_storage_dir;

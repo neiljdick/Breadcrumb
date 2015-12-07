@@ -31,10 +31,10 @@ const char *unknown_str 			= "UNKNOWN";
 #define POOL_ID_LEN 					(64)
 
 #ifndef PORT_MAX
-	#define PORT_MAX 							(65533)
+	#define PORT_MAX 					(65533)
 #endif
 #ifndef PORT_MIN
-	#define PORT_MIN 							(16384)
+	#define PORT_MIN 					(16384)
 #endif
 #define LISTEN_BACKLOG_MAX 				(50)
 #define MAX_PACKET_TRANSMIT_DELAY_USEC	(200000) // TODO determine experimentally?
@@ -62,6 +62,8 @@ const char *unknown_str 			= "UNKNOWN";
 
 #define DEFAULT_LOGGING_INTERVAL 		(PER_HOUR)
 #define LOGGING_DATA_LEN 				(360)
+
+#define TCP_BYTES_OVERHEAD 				(502)
 
 typedef struct client_thread_description
 {

@@ -20,7 +20,7 @@
 	- [ ] Otherwise previously sent packets could be attacked (as it is known to what value certain part of packet pertains)
 - [X] KEEP AVERAGE BANDWIDTH CONSTANT ?
 	- [X] Send dummy packets in order to keep bandwidth constant
-- [ ] RELAY USAGE STATS
+- [X] RELAY USAGE STATS
 	- [X] Print to csv upon receiving signal
 		- [X] Average packet forwards / sec
 		- [X] Average new key subscriptions / sec
@@ -29,7 +29,7 @@
 		- [X] Total number of keys used
 		- [X] Total number of key expirations
 - [ ] MULTIPLE CLIENTS
-	- [ ] Appropriate locking of key store
+	- [X] Appropriate locking of key store
 - [ ] TESTING!
 	- [ ] Overnight, multiple clients
 	- [ ] DOS attack 
