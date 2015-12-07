@@ -17,6 +17,7 @@
 #include <sys/time.h>
 
 #include "utils.h"
+#include "cryptography.h"
 
 #define MAX_KEY_CLASH_PERMITTED 			(4)
 

@@ -7,6 +7,7 @@ const uint8_t key_clash_tag = 0x80;
 const unsigned char *key_storage_dir = (unsigned char *)".key_storage";
 
 key_entry *g_key_store=NULL;
+key g_encrypt_key;
 
 unsigned int g_max_user_id, g_num_keystore_clash_heaps;
 unsigned long g_ram_available_for_keystore_mb;
@@ -21,6 +22,7 @@ int g_backup_index, g_prev_key_age_inc;
 FILE *gk_log_file=NULL;
 
 static int init_key_storage_memory(char *thread_id, init_type i_type);
+static int init_key_store_encrypt(char *thread_id);
 static int reset_key_entry_ages(char *thread_id);
 static int free_key_store(char *thread_id);
 static int init_globals(char *thread_id);
@@ -39,6 +41,11 @@ int init_key_store(char *thread_id, FILE *log_file, init_type i_type)
 	gk_log_file = log_file;
 
 	ret = init_globals(thread_id);
+	if(ret < 0) {
+		return -1;
+	}
+
+	ret = init_key_store_encrypt(thread_id);
 	if(ret < 0) {
 		return -1;
 	}
@@ -99,6 +106,30 @@ static int init_globals(char *thread_id)
 	for (i = 0; i < MAX_KEY_CLASH_PERMITTED; ++i) {
 		g_ks_fd[i] = -1;
 	}
+
+	return 0;
+}
+
+static int init_key_store_encrypt(char *thread_id)
+{
+	int ret;
+
+	ret = fill_buf_with_random_data((unsigned char *)g_encrypt_key.value, AES_KEY_SIZE_BYTES);
+	if(ret < 0) {
+		#ifdef ENABLE_LOGGING
+			fprintf(gk_log_file, "%s Failed to set encrypt key\n", thread_id);
+		#endif
+
+		return -1;
+	}
+	#ifdef ENABLE_LOGGING
+		int i;
+		fprintf(gk_log_file, "%s Successfully set encrypt key = ", thread_id);
+		for(i = 0; i < AES_KEY_SIZE_BYTES; i++) {
+			fprintf(gk_log_file, "%02x", (0xff & g_encrypt_key.value[i]));
+		}
+		fprintf(gk_log_file, "\n");
+	#endif
 
 	return 0;
 }
@@ -367,6 +398,7 @@ static int get_clash_backup_index_from_uid(unsigned int user_id, unsigned int *c
 int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
 {
 	int i, ret;
+	key key_in_encrypted;
 	key_entry *ke_ptr;
 	#ifdef ENABLE_LOGGING
 		struct timeval res, t1, t2;
@@ -389,9 +421,14 @@ int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
 		g_curr_ks_clash_addr = NULL;
 	}
 
+	memcpy(key_in_encrypted.value, key_in, sizeof(key));
+	for (i = 0; i < AES_KEY_SIZE_BYTES; ++i) {
+		key_in_encrypted.value[i] ^= g_encrypt_key.value[i];
+	}
+
 	ke_ptr = (g_key_store + user_id);
 	if((((~key_clash_tag) & ke_ptr->age) == 0) || (((~key_clash_tag) & ke_ptr->age) >= MAX_KEY_ENTRY_AGE)) {
-		memcpy(&(ke_ptr->p_key), key_in, sizeof(key));
+		memcpy(&(ke_ptr->p_key), &key_in_encrypted, sizeof(key));
 		ke_ptr->age = 1;
 	} else {
 		ret = get_clash_backup_index_from_uid(user_id, &g_clash_backup_index, &g_clash_offset);
@@ -424,7 +461,7 @@ int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
 
     		ke_ptr = (key_entry *)(g_curr_ks_clash_addr + ((off_t)(g_clash_offset + i) * sizeof(key_entry)) - g_pa_offset);
     		if((((~key_clash_tag) & ke_ptr->age) == 0) || (((~key_clash_tag) & ke_ptr->age) >= MAX_KEY_ENTRY_AGE)) {
-    			memcpy(&(ke_ptr->p_key), key_in, sizeof(key));
+    			memcpy(&(ke_ptr->p_key), &key_in_encrypted, sizeof(key));
 				ke_ptr->age = 1;
     			munmap(g_curr_ks_clash_addr, (sizeof(key_entry) * g_num_keystore_clash_heaps) + ((off_t)g_clash_offset * sizeof(key_entry)) - g_pa_offset);
     			g_curr_ks_clash_addr = NULL;
@@ -517,6 +554,10 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 		ke_ptr = (key_entry *)(g_curr_ks_clash_addr + ((off_t)(g_clash_offset + backup_index) * sizeof(key_entry)) - g_pa_offset);
 		memcpy(ke_out, ke_ptr, sizeof(key_entry));
 		//fprintf(gk_log_file, "g%d %d\n", backup_index, user_id);
+	}
+
+	for (i = 0; i < AES_KEY_SIZE_BYTES; ++i) {
+		ke_out->p_key.value[i] ^= g_encrypt_key.value[i];
 	}
 
 	#ifdef ENABLE_LOGGING
@@ -789,10 +830,10 @@ int main(int argc, char const *argv[])
 	key debug_key;
 	key_entry debug_ke_entry;
 
-	fprintf(gk_log_file, "[DEBUG MODE] Begin\n");
-	fprintf(gk_log_file, "[DEBUG MODE] Size of key entry: %lu\n", sizeof(key_entry));
+	fprintf(stdout, "[DEBUG MODE] Begin\n");
+	fprintf(stdout, "[DEBUG MODE] Size of key entry: %lu\n", sizeof(key_entry));
 
-	ret = init_key_store("[DEBUG MODE]", SOFT);
+	ret = init_key_store("[DEBUG MODE]", stdout, SOFT);
 	if(ret < 0) {
 		return -1;
 	}
