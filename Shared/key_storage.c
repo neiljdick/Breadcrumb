@@ -17,7 +17,7 @@ int g_ks_fd[MAX_KEY_CLASH_PERMITTED];
 char *g_curr_ks_clash_addr;
 off_t g_pa_offset;
 unsigned long g_total_keys_used;
-int g_backup_index;
+int g_backup_index, g_prev_key_age_inc;
 FILE *gk_log_file=NULL;
 
 static int init_key_storage_memory(char *thread_id, init_type i_type);
@@ -94,6 +94,7 @@ static int init_globals(char *thread_id)
 	g_total_keys_used = 0;
 	g_clash_backup_index = 0;
 	g_clash_offset = 0;
+	g_prev_key_age_inc = 0;
 
 	for (i = 0; i < MAX_KEY_CLASH_PERMITTED; ++i) {
 		g_ks_fd[i] = -1;
@@ -241,28 +242,85 @@ static int reset_key_entry_ages(char *thread_id)
 
 int handle_key_entry_age_increment(char *thread_id)
 {
+	int ret, i, j, all_backups_removed;
 	key_entry *ke_ptr;
-	int i;
-	#ifdef ENABLE_LOGGING
-		struct timeval res, t1, t2;
-		gettimeofday(&t1, NULL);
-	#endif
+	struct timeval res, t1, t2;
 
-	ke_ptr = (g_key_store);
-	for (i = 0; i < g_max_user_id; i++) {
-		if(((~key_clash_tag) & ke_ptr->age) > 0) {
+	gettimeofday(&t1, NULL);
+
+	ke_ptr = (g_key_store + g_prev_key_age_inc);
+	for (i = g_prev_key_age_inc; i < g_max_user_id; i++) {
+		if(ke_ptr->age != 0) {
 			if(((~key_clash_tag) & ke_ptr->age) > MAX_KEY_ENTRY_AGE) {
-				remove_key_from_key_store(thread_id, i, -1);
-			} else {
+				ke_ptr->age = (key_clash_tag & ke_ptr->age);
+			} else if (((~key_clash_tag) & ke_ptr->age) > 0) {
 				ke_ptr->age = ((key_clash_tag & ke_ptr->age) | (((~key_clash_tag) & ke_ptr->age) + 1));
 			}
+			if(key_clash_tag & ke_ptr->age) {
+				if(i != g_cached_user_id) {
+					if(g_curr_ks_clash_addr != NULL) {
+						munmap(g_curr_ks_clash_addr, (sizeof(key_entry) * g_num_keystore_clash_heaps) + ((off_t)g_clash_offset * sizeof(key_entry)) - g_pa_offset);
+						g_curr_ks_clash_addr = NULL;
+					}
+				}
+				ret = get_clash_backup_index_from_uid(i, &g_clash_backup_index, &g_clash_offset);
+				if(ret < 0) {
+					return -1;
+				}
+				if((g_clash_backup_index > g_num_keystore_clash_heaps) || (g_clash_backup_index < 0)) {
+					return -1;
+				}
+				if(g_clash_offset >= g_max_user_id) {
+					return -1;
+				}
+				if((i != g_cached_user_id) || (g_curr_ks_clash_addr == NULL)) {
+					g_pa_offset = ((off_t)(g_clash_offset) * sizeof(key_entry)) & ~(sysconf(_SC_PAGE_SIZE) - 1);
+					g_curr_ks_clash_addr = mmap(NULL, (sizeof(key_entry) * g_num_keystore_clash_heaps) + ((off_t)(g_clash_offset) * sizeof(key_entry)) - g_pa_offset, PROT_WRITE, MAP_SHARED, g_ks_fd[g_clash_backup_index], g_pa_offset);
+					if(g_curr_ks_clash_addr == MAP_FAILED) {
+						#ifdef ENABLE_LOGGING
+							fprintf(gk_log_file, "Failed to mmap key storage clash file (%u)\n", g_clash_backup_index);
+						#endif
+
+						return -1;
+					}
+					g_cached_user_id = i;
+				}
+
+				all_backups_removed = 1;
+				for (j = 0; j < g_num_keystore_clash_heaps; ++j) {
+					ke_ptr = (key_entry *)(g_curr_ks_clash_addr + ((off_t)(g_clash_offset + j) * sizeof(key_entry)) - g_pa_offset);
+					if(((~key_clash_tag) & ke_ptr->age) > MAX_KEY_ENTRY_AGE) {
+						ke_ptr->age = 0;
+					} else if (((~key_clash_tag) & ke_ptr->age) > 0) {
+						ke_ptr->age = (((~key_clash_tag) & ke_ptr->age) + 1);
+						all_backups_removed = 0;
+					}
+				}
+				if(all_backups_removed) {
+					ke_ptr = (g_key_store + i);
+					ke_ptr->age = (~key_clash_tag) & ke_ptr->age;
+					#ifdef ENABLE_LOGGING
+						fprintf(gk_log_file, "%s Found all key clashes for UID = %u removed\n", thread_id, i);
+					#endif
+				}
+			}
 		}
+		if((i % 30) == 0) {
+			gettimeofday(&t2, NULL);
+			timeval_subtract(&res, &t2, &t1);
+			if(res.tv_usec > MAX_TIME_FOR_KEY_INCREMENT_USEC) {
+				break;
+			}
+		}
+
 		ke_ptr++;
+	}
+	g_prev_key_age_inc = i;
+	if(g_prev_key_age_inc >= g_max_user_id) {
+		g_prev_key_age_inc = 0;
 	}
 
 	#ifdef ENABLE_LOGGING
-		gettimeofday(&t2, NULL);
-		timeval_subtract(&res, &t2, &t1);
 		fprintf(gk_log_file, "%s Time to complete key age increment task: %lu us\n", thread_id, res.tv_usec);
 	#endif
 

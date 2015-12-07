@@ -129,11 +129,14 @@ int main(int argc, char *argv[])
 		#ifdef ENABLE_BANDWIDTH_REPORTING_UI
 			handle_bandwidth_reporting();
 		#endif
+			
+		n++;
 		if(n >= one_sec_count)  {
 			handle_logging();
+			sem_wait(&keystore_sem);
+			handle_key_entry_age_increment("[MAIN THREAD]");
+			sem_post(&keystore_sem);
 		}		
-
-		n++;
 		if(n >= one_sec_count) {
 			n = 0;
 		}
