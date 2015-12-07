@@ -1,10 +1,10 @@
-- [ ] ENCRYPT KEY DATABASE
-	- [ ] Using hash value of relay password?
+- [X] ENCRYPT KEY DATABASE
+	- [X] Using hash value of relay password?
 - [X] KEY CLASH STRUCTURE
 	- [X] Modify key backup structure
-- [ ] KEY AGE INCREMENT
-	- [ ] Increment clash keys also
-	- [ ] Only increment for 0.1 seconds at a time
+- [X] KEY AGE INCREMENT
+	- [X] Increment clash keys also
+	- [X] Only increment for X seconds at a time
 - [ ] SPIDER
 	- [ ] Keep track of which relays are online
 - [ ] MESSAGE FUNCTIONALITY
@@ -28,7 +28,7 @@
 		- [X] Total number of key clashes
 		- [X] Total number of keys used
 		- [X] Total number of key expirations
-- [ ] MULTIPLE CLIENTS
+- [X] MULTIPLE CLIENTS
 	- [X] Appropriate locking of key store
 - [ ] TESTING!
 	- [ ] Overnight, multiple clients

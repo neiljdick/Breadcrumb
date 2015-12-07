@@ -1,6 +1,7 @@
 #include "key_storage.h"
 
 //#define ENABLE_LOGGING
+//#define LOG_TO_FILE_INSTEAD_OF_STDOUT
 //#define DEBUG_MODE
 
 const uint8_t key_clash_tag = 0x80;
@@ -19,7 +20,6 @@ char *g_curr_ks_clash_addr;
 off_t g_pa_offset;
 unsigned long g_total_keys_used;
 int g_backup_index, g_prev_key_age_inc;
-FILE *gk_log_file=NULL;
 
 static int init_key_storage_memory(char *thread_id, init_type i_type);
 static int init_key_store_encrypt(char *thread_id);
@@ -28,17 +28,16 @@ static int free_key_store(char *thread_id);
 static int init_globals(char *thread_id);
 static int get_clash_backup_index_from_uid(unsigned int user_id, unsigned int *clash_backup_index, unsigned int *clash_offset);
 
-int init_key_store(char *thread_id, FILE *log_file, init_type i_type)
+int init_key_store(char *thread_id, init_type i_type)
 {
 	int ret;
 
 	if(g_key_store != NULL) {
 		return -1;
 	}
-	if(log_file == NULL) {
-		return -1;
-	}
-	gk_log_file = log_file;
+	#ifdef LOG_TO_FILE_INSTEAD_OF_STDOUT
+		freopen("key_values.log", "w", stdout);
+	#endif
 
 	ret = init_globals(thread_id);
 	if(ret < 0) {
@@ -61,7 +60,7 @@ int init_key_store(char *thread_id, FILE *log_file, init_type i_type)
 	}
 
 	#ifdef ENABLE_LOGGING
-		fprintf(gk_log_file, "%s Successfully initialized key storage\n", thread_id);
+		fprintf(stdout, "%s Successfully initialized key storage\n", thread_id);
 	#endif
 
 	return 0;
@@ -74,7 +73,7 @@ int get_number_of_key_clash_backups(char *thread_id, unsigned int *total_key_cla
 	}
 
 	#ifdef ENABLE_LOGGING
-		fprintf(gk_log_file, "%s Total number of keystore clash heaps: %u\n", thread_id, g_num_keystore_clash_heaps);
+		fprintf(stdout, "%s Total number of keystore clash heaps: %u\n", thread_id, g_num_keystore_clash_heaps);
 	#endif
 
 	*total_key_clash_backups = g_num_keystore_clash_heaps;
@@ -117,18 +116,18 @@ static int init_key_store_encrypt(char *thread_id)
 	ret = fill_buf_with_random_data((unsigned char *)g_encrypt_key.value, AES_KEY_SIZE_BYTES);
 	if(ret < 0) {
 		#ifdef ENABLE_LOGGING
-			fprintf(gk_log_file, "%s Failed to set encrypt key\n", thread_id);
+			fprintf(stdout, "%s Failed to set encrypt key\n", thread_id);
 		#endif
 
 		return -1;
 	}
 	#ifdef ENABLE_LOGGING
 		int i;
-		fprintf(gk_log_file, "%s Successfully set encrypt key = ", thread_id);
+		fprintf(stdout, "%s Successfully set encrypt key = ", thread_id);
 		for(i = 0; i < AES_KEY_SIZE_BYTES; i++) {
-			fprintf(gk_log_file, "%02x", (0xff & g_encrypt_key.value[i]));
+			fprintf(stdout, "%02x", (0xff & g_encrypt_key.value[i]));
 		}
-		fprintf(gk_log_file, "\n");
+		fprintf(stdout, "\n");
 	#endif
 
 	return 0;
@@ -153,7 +152,7 @@ static int init_key_storage_memory(char *thread_id, init_type i_type)
 	ret = get_free_ram_in_mb(thread_id, &ram_free_mb);
 	if(ret < 0) {
 		#ifdef ENABLE_LOGGING
-			fprintf(gk_log_file, "%s Unable to determine free RAM for initialization of key storage memory\n", thread_id);
+			fprintf(stdout, "%s Unable to determine free RAM for initialization of key storage memory\n", thread_id);
 		#endif
 
 		ram_free_mb = DEFAULT_RAM_FREE_MB;
@@ -163,7 +162,7 @@ static int init_key_storage_memory(char *thread_id, init_type i_type)
 	while(1) {
 		g_ram_available_for_keystore_mb = (unsigned long)((float)ram_free_mb * (float)RAM_FOR_KEYSTORE_RATIO * (float)attempting_usage_ratio);
 		#ifdef ENABLE_LOGGING
-			fprintf(gk_log_file, "%s Attempting to use %lu MB for key storage\n", thread_id, g_ram_available_for_keystore_mb);
+			fprintf(stdout, "%s Attempting to use %lu MB for key storage\n", thread_id, g_ram_available_for_keystore_mb);
 		#endif
 
 		g_max_user_id = (g_ram_available_for_keystore_mb * (1024*1024)) / ((unsigned long)sizeof(key_entry));
@@ -178,13 +177,13 @@ static int init_key_storage_memory(char *thread_id, init_type i_type)
 		}
 	}
 	#ifdef ENABLE_LOGGING
-		fprintf(gk_log_file, "%s Successfully allocated key storage memory with a maximum user id = %u\n", thread_id, g_max_user_id);
+		fprintf(stdout, "%s Successfully allocated key storage memory with a maximum user id = %u\n", thread_id, g_max_user_id);
 	#endif
 
 	ret = get_free_disk_space_in_mb(thread_id, &disk_free_mb);
 	if(ret < 0) {
 		#ifdef ENABLE_LOGGING
-			fprintf(gk_log_file, "%s Unable to determine free disk space for key storage clash memory\n", thread_id);
+			fprintf(stdout, "%s Unable to determine free disk space for key storage clash memory\n", thread_id);
 		#endif
 
 		disk_free_mb = DEFAULT_DISK_FREE_MB;
@@ -199,8 +198,8 @@ static int init_key_storage_memory(char *thread_id, init_type i_type)
 		}
 	}
 
-	fprintf(gk_log_file, "%s Initializing key store heaps..", thread_id);
-	fflush(gk_log_file);
+	fprintf(stdout, "%s Initializing key store heaps..", thread_id);
+	fflush(stdout);
 	sprintf(buf, "./%s", key_storage_dir);
 	mkdir(buf, S_IRWXU | S_IRWXG);
 	memset(&(empty_key_entry.p_key), 0, sizeof(key));
@@ -232,8 +231,8 @@ static int init_key_storage_memory(char *thread_id, init_type i_type)
 			write(g_ks_fd[i], &empty_key_entry_buf, sizeof(empty_key_entry_buf));
 			if((j % 1000) == 0) {
 				fsync(g_ks_fd[i]);
-				fprintf(gk_log_file, ".");
-				fflush(gk_log_file);
+				fprintf(stdout, ".");
+				fflush(stdout);
 			}
 		}
 		for (j = 0; j < empty_key_entry_count_overflow; ++j) {
@@ -241,7 +240,7 @@ static int init_key_storage_memory(char *thread_id, init_type i_type)
 		}
 		fsync(g_ks_fd[i]);
 	}
-	fprintf(gk_log_file, "done\n");
+	fprintf(stdout, "done\n");
 	
 	return 0;
 }
@@ -265,7 +264,7 @@ static int reset_key_entry_ages(char *thread_id)
 	#ifdef ENABLE_LOGGING
 		gettimeofday(&t2, NULL);
 		timeval_subtract(&res, &t2, &t1);
-		fprintf(gk_log_file, "%s Time to complete key age reset task: %lu us\n", thread_id, res.tv_usec);
+		fprintf(stdout, "%s Time to complete key age reset task: %lu us\n", thread_id, res.tv_usec);
 	#endif
 
 	return 0;
@@ -312,7 +311,7 @@ int handle_key_entry_age_increment(char *thread_id)
 					g_curr_ks_clash_addr = mmap(NULL, (sizeof(key_entry) * g_num_keystore_clash_heaps) + ((off_t)(g_clash_offset) * sizeof(key_entry)) - g_pa_offset, PROT_WRITE, MAP_SHARED, g_ks_fd[g_clash_backup_index], g_pa_offset);
 					if(g_curr_ks_clash_addr == MAP_FAILED) {
 						#ifdef ENABLE_LOGGING
-							fprintf(gk_log_file, "Failed to mmap key storage clash file (%u)\n", g_clash_backup_index);
+							fprintf(stdout, "Failed to mmap key storage clash file (%u)\n", g_clash_backup_index);
 						#endif
 
 						return -1;
@@ -334,7 +333,7 @@ int handle_key_entry_age_increment(char *thread_id)
 					ke_ptr = (g_key_store + i);
 					ke_ptr->age = (~key_clash_tag) & ke_ptr->age;
 					#ifdef ENABLE_LOGGING
-						fprintf(gk_log_file, "%s Found all key clashes for UID = %u removed\n", thread_id, i);
+						fprintf(stdout, "%s Found all key clashes for UID = %u removed\n", thread_id, i);
 					#endif
 				}
 			}
@@ -355,7 +354,7 @@ int handle_key_entry_age_increment(char *thread_id)
 	}
 
 	#ifdef ENABLE_LOGGING
-		fprintf(gk_log_file, "%s Time to complete key age increment task: %lu us\n", thread_id, res.tv_usec);
+		fprintf(stdout, "%s Time to complete key age increment task: %lu us\n", thread_id, res.tv_usec);
 	#endif
 
 	return 0;
@@ -365,7 +364,7 @@ static int free_key_store(char *thread_id)
 {
 	if(g_key_store == NULL) {
 		#ifdef ENABLE_LOGGING
-			fprintf(gk_log_file, "%s Key storage is already freed\n", thread_id);
+			fprintf(stdout, "%s Key storage is already freed\n", thread_id);
 		#endif
 
 		return -1;
@@ -414,7 +413,7 @@ int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
 
 	if(user_id >= g_max_user_id) {
 		#ifdef ENABLE_LOGGING
-			fprintf(gk_log_file, "%s Failed to set key, user ID (%u) must be less than key storage size (%u)\n", thread_id, user_id, g_max_user_id);
+			fprintf(stdout, "%s Failed to set key, user ID (%u) must be less than key storage size (%u)\n", thread_id, user_id, g_max_user_id);
 		#endif
 
 		return -1;
@@ -449,7 +448,7 @@ int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
 		g_curr_ks_clash_addr = mmap(NULL, (sizeof(key_entry) * g_num_keystore_clash_heaps) + ((off_t)g_clash_offset * sizeof(key_entry)) - g_pa_offset, PROT_READ | PROT_WRITE, MAP_SHARED, g_ks_fd[g_clash_backup_index], g_pa_offset);
 		if(g_curr_ks_clash_addr == MAP_FAILED) {
 			#ifdef ENABLE_LOGGING
-				fprintf(gk_log_file, "%s Failed to mmap key storage clash file (%u)\n", thread_id, g_clash_backup_index);
+				fprintf(stdout, "%s Failed to mmap key storage clash file (%u)\n", thread_id, g_clash_backup_index);
 			#endif
 
 			return -1;
@@ -470,7 +469,7 @@ int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
     			g_curr_ks_clash_addr = NULL;
     			ke_ptr = (g_key_store + user_id);
     			ke_ptr->age |= key_clash_tag;
-    			//fprintf(gk_log_file, "s%d %d\n", i, user_id);
+    			//fprintf(stdout, "s%d %d\n", i, user_id);
     			break;
     		}
 		}
@@ -485,11 +484,11 @@ int set_key_for_user_id(char *thread_id, unsigned int user_id, key *key_in)
 	#ifdef ENABLE_LOGGING
 		gettimeofday(&t2, NULL);
 		timeval_subtract(&res, &t2, &t1);
-		fprintf(gk_log_file, "%s Successfully set key = ", thread_id);
+		fprintf(stdout, "%s Successfully set key = ", thread_id);
 		for(i = 0; i < AES_KEY_SIZE_BYTES; i++) {
-			fprintf(gk_log_file, "%02x", (0xff & key_in->value[i]));
+			fprintf(stdout, "%02x", (0xff & key_in->value[i]));
 		}
-		fprintf(gk_log_file, " for user = %u. Time taken: %lu us\n", user_id, res.tv_usec);
+		fprintf(stdout, " for user = %u. Time taken: %lu us\n", user_id, res.tv_usec);
 	#endif
 
 	return 0;
@@ -509,7 +508,7 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 	}
 	if(user_id >= g_max_user_id) {
 		#ifdef ENABLE_LOGGING
-			fprintf(gk_log_file, "%s Failed to get key, user ID (%u) must be less than key storage size (%u)\n", thread_id, user_id, g_max_user_id);
+			fprintf(stdout, "%s Failed to get key, user ID (%u) must be less than key storage size (%u)\n", thread_id, user_id, g_max_user_id);
 		#endif
 
 		return -1;
@@ -518,7 +517,7 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 		return -1;
 	}
 	#ifdef ENABLE_LOGGING
-		fprintf(gk_log_file, "%s Attempting to get key for UID (%u)..", thread_id, user_id);
+		fprintf(stdout, "%s Attempting to get key for UID (%u)..", thread_id, user_id);
 	#endif
 
 	if(backup_index < 0) {
@@ -546,7 +545,7 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 			g_curr_ks_clash_addr = mmap(NULL, (sizeof(key_entry) * g_num_keystore_clash_heaps) + ((off_t)(g_clash_offset + backup_index) * sizeof(key_entry)) - g_pa_offset, PROT_WRITE, MAP_SHARED, g_ks_fd[g_clash_backup_index], g_pa_offset);
 			if(g_curr_ks_clash_addr == MAP_FAILED) {
 				#ifdef ENABLE_LOGGING
-					fprintf(gk_log_file, "Failed to mmap key storage clash file (%u)\n", g_clash_backup_index);
+					fprintf(stdout, "Failed to mmap key storage clash file (%u)\n", g_clash_backup_index);
 				#endif
 
 				return -1;
@@ -556,7 +555,7 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 
 		ke_ptr = (key_entry *)(g_curr_ks_clash_addr + ((off_t)(g_clash_offset + backup_index) * sizeof(key_entry)) - g_pa_offset);
 		memcpy(ke_out, ke_ptr, sizeof(key_entry));
-		//fprintf(gk_log_file, "g%d %d\n", backup_index, user_id);
+		//fprintf(stdout, "g%d %d\n", backup_index, user_id);
 	}
 
 	for (i = 0; i < AES_KEY_SIZE_BYTES; ++i) {
@@ -567,15 +566,15 @@ int get_key_for_user_id(char *thread_id, unsigned int user_id, int backup_index,
 		if((ke_ptr->age & (~key_clash_tag)) > 0) {
 			gettimeofday(&t2, NULL);
 			timeval_subtract(&res, &t2, &t1);
-			fprintf(gk_log_file, "Successfully got key = ");
+			fprintf(stdout, "Successfully got key = ");
 			for(i = 0; i < AES_KEY_SIZE_BYTES; i++) {
-				fprintf(gk_log_file, "%02x", (0xff & ke_out->p_key.value[i]));
+				fprintf(stdout, "%02x", (0xff & ke_out->p_key.value[i]));
 			}
-			fprintf(gk_log_file, " for user = %u, at index: %u. Clash/Age: 0x%x, Time taken: %lu us\n", user_id, (backup_index + 1), (0xFF & ke_ptr->age), res.tv_usec);
+			fprintf(stdout, " for user = %u, at index: %u. Clash/Age: 0x%x, Time taken: %lu us\n", user_id, (backup_index + 1), (0xFF & ke_ptr->age), res.tv_usec);
 		} else {
 			gettimeofday(&t2, NULL);
 			timeval_subtract(&res, &t2, &t1);
-			fprintf(gk_log_file, "Found key expired. Time taken: %lu us\n", res.tv_usec);
+			fprintf(stdout, "Found key expired. Time taken: %lu us\n", res.tv_usec);
 		}
 	#endif
 
@@ -592,7 +591,7 @@ int remove_key_from_key_store(char *thread_id, unsigned int user_id, int backup_
 	}
 	if(user_id >= g_max_user_id) {
 		#ifdef ENABLE_LOGGING
-			fprintf(gk_log_file, "%s Failed to remove key, user ID (%u) must be less than key storage size (%u)\n", thread_id, user_id, g_max_user_id);
+			fprintf(stdout, "%s Failed to remove key, user ID (%u) must be less than key storage size (%u)\n", thread_id, user_id, g_max_user_id);
 		#endif
 
 		return -1;
@@ -601,7 +600,7 @@ int remove_key_from_key_store(char *thread_id, unsigned int user_id, int backup_
 		return -1;
 	}
 	#ifdef ENABLE_LOGGING
-		fprintf(gk_log_file, "%s Attempting to remove key for UID (%u)..", thread_id, user_id);
+		fprintf(stdout, "%s Attempting to remove key for UID (%u)..", thread_id, user_id);
 	#endif
 
 	if(backup_index < 0) {
@@ -629,7 +628,7 @@ int remove_key_from_key_store(char *thread_id, unsigned int user_id, int backup_
 			g_curr_ks_clash_addr = mmap(NULL, (sizeof(key_entry) * g_num_keystore_clash_heaps) + ((off_t)(g_clash_offset + backup_index) * sizeof(key_entry)) - g_pa_offset, PROT_WRITE, MAP_SHARED, g_ks_fd[g_clash_backup_index], g_pa_offset);
 			if(g_curr_ks_clash_addr == MAP_FAILED) {
 				#ifdef ENABLE_LOGGING
-					fprintf(gk_log_file, "Failed to mmap key storage clash file (%u)\n", g_clash_backup_index);
+					fprintf(stdout, "Failed to mmap key storage clash file (%u)\n", g_clash_backup_index);
 				#endif
 
 				return -1;
@@ -652,16 +651,16 @@ int remove_key_from_key_store(char *thread_id, unsigned int user_id, int backup_
 			ke_ptr = (g_key_store + user_id);
 			ke_ptr->age = (~key_clash_tag) & ke_ptr->age;
 			#ifdef ENABLE_LOGGING
-				fprintf(gk_log_file, "%s Found all key clashes for UID = %u removed\n", thread_id, user_id);
+				fprintf(stdout, "%s Found all key clashes for UID = %u removed\n", thread_id, user_id);
 			#endif
 		}
-		//fprintf(gk_log_file, "r%d %d\n", backup_index, user_id);
+		//fprintf(stdout, "r%d %d\n", backup_index, user_id);
 	}
 	
 	if(g_total_keys_used > 0)
 		g_total_keys_used--;
 	#ifdef ENABLE_LOGGING
-		fprintf(gk_log_file, "%s Successfully removed key with UID = %u and backup index = %d\n", thread_id, user_id, backup_index);
+		fprintf(stdout, "%s Successfully removed key with UID = %u and backup index = %d\n", thread_id, user_id, backup_index);
 	#endif
 
 	return 0;
@@ -706,7 +705,7 @@ int get_free_ram_in_mb(char *thread_id, unsigned long *ram_free_mb)
 	fp = fopen(MEM_STAT_FILE, "r");
 	if(fp == NULL) {
 		#ifdef ENABLE_LOGGING
-			fprintf(gk_log_file, "%s Failed to open memory statistics file, %s\n", thread_id, MEM_STAT_FILE);
+			fprintf(stdout, "%s Failed to open memory statistics file, %s\n", thread_id, MEM_STAT_FILE);
 		#endif
 
 		return -1;
@@ -782,14 +781,14 @@ int get_free_ram_in_mb(char *thread_id, unsigned long *ram_free_mb)
 		*ram_free_mb = (unsigned long)(multiplier * (float)atol(free_bytes_buf));
 
 		#ifdef ENABLE_LOGGING
-			fprintf(gk_log_file, "%s Found free RAM: %lu MB\n", thread_id, *ram_free_mb);
+			fprintf(stdout, "%s Found free RAM: %lu MB\n", thread_id, *ram_free_mb);
 		#endif
 
 		fclose(fp);
 		return 0;
 	} else {
 		#ifdef ENABLE_LOGGING
-			fprintf(gk_log_file, "%s Failed to parse memory statistics, found_free_bytes: %d, found_qualifier: %d\n", thread_id, 
+			fprintf(stdout, "%s Failed to parse memory statistics, found_free_bytes: %d, found_qualifier: %d\n", thread_id, 
 						found_free_bytes, found_qualifier);
 		#endif
 
@@ -810,7 +809,7 @@ int get_free_disk_space_in_mb(char *thread_id, unsigned long *disk_free_mb)
 	ret = statvfs(".", &fs_stat);
 	if(ret < 0) {
 		#ifdef ENABLE_LOGGING
-			fprintf(gk_log_file, "%s Failed to get file system statistics\n", thread_id);
+			fprintf(stdout, "%s Failed to get file system statistics\n", thread_id);
 		#endif
 
 		return -1;
@@ -819,7 +818,7 @@ int get_free_disk_space_in_mb(char *thread_id, unsigned long *disk_free_mb)
 	*disk_free_mb = ((fs_stat.f_bsize * fs_stat.f_bfree) / 1000000);
 
 	#ifdef ENABLE_LOGGING
-		fprintf(gk_log_file, "%s Found free DISK: %lu MB\n", thread_id, *disk_free_mb);
+		fprintf(stdout, "%s Found free DISK: %lu MB\n", thread_id, *disk_free_mb);
 	#endif
 
 	return 0;

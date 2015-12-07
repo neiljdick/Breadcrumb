@@ -55,7 +55,7 @@ typedef struct key_entry
 	uint8_t age;
 } key_entry;
 
-int init_key_store(char *thread_id, FILE *log_file, init_type i_type);
+int init_key_store(char *thread_id, init_type i_type);
 int shutdown_key_store(char *thread_id);
 
 int remove_key_from_key_store(char *thread_id, unsigned int user_id, int backup_index);
