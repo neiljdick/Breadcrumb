@@ -451,7 +451,7 @@ int fill_buf_with_random_data(unsigned char *buf, int buf_len)
 	return 0;
 }
 
-int get_hash_of_string(char *thread_id, int hash_count, const char *in_str, char **out_str /* out */, int *relay_id_len /* out */)
+int get_sha256_hash_of_string(char *thread_id, int hash_count, const char *in_str, char **out_str /* out */, int *out_str_len /* out */)
 {
 	char tmp_hash[SHA256_DIGEST_LENGTH];
 	SHA256_CTX sha256;
@@ -461,7 +461,7 @@ int get_hash_of_string(char *thread_id, int hash_count, const char *in_str, char
 		return -1;
 	}
 
-	*relay_id_len = (SHA256_DIGEST_LENGTH*2);
+	*out_str_len = (SHA256_DIGEST_LENGTH*2);
 	*out_str = calloc((SHA256_DIGEST_LENGTH*2), sizeof(char));
 	if(*out_str == NULL) {
 		#ifdef ENABLE_LOGGING

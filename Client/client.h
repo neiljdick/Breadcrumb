@@ -43,9 +43,8 @@ char *program_name = "Client";
 #define MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER 	(3)
 
 #define PUBLIC_KEY_CERT_SIZE					(426)
-#define CONVERSATION_NAME_MAX_LENGTH 			(128)
 #define USER_NAME_MIN_LENGTH 					(4)
-#define USER_NAME_MAX_LENGTH 					(128)
+#define USER_NAME_MAX_LENGTH 					(32)
 #define RELAY_POOL_MAX_SIZE						(20)
 #define MAX_CONVERSATIONS						(32)
 #define RELAY_IP_MAX_LENGTH						(16)
@@ -63,6 +62,17 @@ char *program_name = "Client";
 #define BANDWIDTH_ST_LENGTH						(64)
 #define CONSTANT_BANDWIDTH_BYTES_PER_SEC		(256.0)
 #define MIN_PACKET_TRANSMISSION_DELAY_US		(500000)
+
+#define COMMAND_BUFFER_SIZE 					(128)
+
+#define ID_HASH_COUNT 							(3000000)
+
+const char prompt_char = '>';
+
+const char *connect_to_chat_cmnd 			= "/connect ";
+const char *network_connectivity_test_cmnd 	= "/network";
+const char *exit_cmnd 						= "/exit";
+const char *help_cmnd 						= "/help";
 
 const char *public_cert_dir = ".relay_certs";
 
@@ -129,8 +139,7 @@ typedef struct relay_info
 typedef struct conversation_info
 {
 	int conversation_valid;
-	char conversation_name[CONVERSATION_NAME_MAX_LENGTH];
-	char friend_name[USER_NAME_MAX_LENGTH];
+	char conversation_name[USER_NAME_MAX_LENGTH];
 	int index_of_server_relay;
 	int index_of_entry_relay;
 	relay_info ri_pool[RELAY_POOL_MAX_SIZE];

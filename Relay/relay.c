@@ -7,7 +7,7 @@
 //#define PRINT_PACKETS
 #define ENABLE_LOG_ON_EXIT
 //#define RECORD_UIDS
-//#define ENABLE_BANDWIDTH_REPORTING_UI
+#define ENABLE_BANDWIDTH_REPORTING_UI
 
 sem_t keystore_sem, logging_sem;
 
@@ -163,7 +163,7 @@ void init_globals(int argc, char *argv[])
 		freopen(buf, "w", stdout);
 	#endif
 
-	ret = get_hash_of_string("[MAIN THREAD]", RELAY_ID_HASH_COUNT, argv[1], &g_relay_id, &g_relay_id_len);
+	ret = get_sha256_hash_of_string("[MAIN THREAD]", RELAY_ID_HASH_COUNT, argv[1], &g_relay_id, &g_relay_id_len);
 	if(ret < 0) {
 		exit(-2);	
 	}
