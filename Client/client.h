@@ -64,14 +64,18 @@ char *program_name = "Client";
 #define MIN_PACKET_TRANSMISSION_DELAY_US		(500000)
 
 #define COMMAND_BUFFER_SIZE 					(128)
+#define USER_INPUT_BUF_LEN 						(128)
 
 #define ID_HASH_COUNT 							(3000000)
 
-const char prompt_char = '>';
+const char prompt_char 		= '>';
+const char *my_chat_tag	 	= "me/>";
+const char *feedback_tag	= "-!-";
 
 const char *connect_to_chat_cmnd 			= "/connect ";
 const char *network_connectivity_test_cmnd 	= "/network";
 const char *exit_cmnd 						= "/exit";
+const char *close_cmnd						= "/close";
 const char *help_cmnd 						= "/help";
 
 const char *public_cert_dir = ".relay_certs";

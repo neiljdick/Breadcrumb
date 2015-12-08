@@ -1,13 +1,13 @@
 #include "client.h"
 
 //#define LOG_TO_FILE_INSTEAD_OF_STDOUT
-#define ENABLE_STANDARD_LOGGING
-#define ENABLE_LOGGING
+//#define ENABLE_LOGGING
 //#define ENABLE_TRANSMIT_RECEIVE_LOGGING
 //#define ENABLE_KEY_HISTORY_LOGGING
 //#define ENABLE_BANDWIDTH_LOGGING
 //#define ENABLE_TOTAL_UID_LOGGING
 //#define ENABLE_UID_HISTORY_LOGGING
+//#define ENABLE_USER_INPUT_THREAD_LOGGING
 #define DEBUG_MODE
 //#define LAN_NETWORKING_MODE
 //#define PRINT_PACKETS
@@ -35,6 +35,7 @@ int g_current_conversation_index;
 conversation_info g_conversations[MAX_CONVERSATIONS];
 char g_client_ip_addr[IP_BUF_MAX_LEN];
 int g_message_port;
+int g_close_current_chat;
 
 route_history g_rhistory;
 
@@ -42,6 +43,7 @@ char g_curr_send_packet_char = '-';
 
 void *send_packet_handler(void *);
 void *receive_packet_handler(void *);
+void *user_input_handler(void *);
 
 static int init_globals(int argc, char const *argv[]);
 static int handle_received_packet(char *packet);
@@ -52,6 +54,7 @@ static void print_ret_code(char *thread_id, int ret);
 static void handle_pthread_ret(char *thread_id, int ret, int clientfd);
 static int init_send_packet_thread(pthread_t *send_packet_thread);
 static int init_receive_packet_thread(pthread_t *receive_packet_thread);
+static int init_handle_user_input_thread(pthread_t *user_input_thread);
 static int init_listening_socket(char *thread_id, unsigned int port, int *listening_socket /* out */);
 static int init_self_ip(char *thread_id);
 static int initialize_relay_verification_command(payload_data *verification_payload);
@@ -158,9 +161,7 @@ int main(int argc, char const *argv[])
 static int init_globals(int argc, char const *argv[])
 {
 	if(argc != 3) {
-		#ifdef ENABLE_STANDARD_LOGGING
-			fprintf(stdout, "Usage: ./%s USER_ID PORT\n", program_name);
-		#endif
+		fprintf(stdout, "Usage: ./%s USER_ID PORT\n", program_name);
 
 		exit(-1);
 	}
@@ -177,31 +178,23 @@ static int init_globals(int argc, char const *argv[])
 	g_current_conversation_index = 0;
 
 	if(strlen(argv[1]) > USER_NAME_MAX_LENGTH) {
-		#ifdef ENABLE_STANDARD_LOGGING
-			fprintf(stdout, "Username must be less than %u characters\n", USER_NAME_MAX_LENGTH);
-		#endif
-
+		fprintf(stdout, "%s Username must be less than %u characters\n", feedback_tag, USER_NAME_MAX_LENGTH);
+		
 		exit(-1);
 	}
 	if(strlen(argv[1]) < USER_NAME_MIN_LENGTH) {
-		#ifdef ENABLE_STANDARD_LOGGING
-			fprintf(stdout, "Username must be more than %u characters\n", USER_NAME_MIN_LENGTH);
-		#endif
+		fprintf(stdout, "%s Username must be more than %u characters\n", feedback_tag, USER_NAME_MIN_LENGTH);
 
 		exit(-1);
 	}
 	g_message_port = (unsigned int)atoi(argv[2]);
 	if(g_message_port > PORT_MAX) {
-		#ifdef ENABLE_STANDARD_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Port number (%u) must be less than %u\n", g_message_port, PORT_MAX);
-		#endif
+		fprintf(stdout, "%s Port number (%u) must be less than %u\n", feedback_tag, g_message_port, PORT_MAX);
 
 		exit(-1);
 	}
 	if(g_message_port < PORT_MIN) {
-		#ifdef ENABLE_STANDARD_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Port number (%u) must be greater than %u\n", g_message_port, PORT_MIN);
-		#endif
+		fprintf(stdout, "%s Port number (%u) must be greater than %u\n", feedback_tag, g_message_port, PORT_MIN);
 
 		exit(-1);
 	}
@@ -210,6 +203,7 @@ static int init_globals(int argc, char const *argv[])
 	memset(&g_rhistory, 0, sizeof(g_rhistory));
 	g_current_conversation_index = 0;
 	g_queue_dummy_packet_transmission = 0;
+	g_close_current_chat = 0;
 
 	memset(&g_bandwidth_data, 0, sizeof(bandwidth_data));
 	#ifdef ENABLE_BANDWIDTH_LOGGING
@@ -293,10 +287,12 @@ static void handle_chat(void)
 {
 	int i, ret;
 	char cmnd_buf[COMMAND_BUFFER_SIZE];
+	pthread_t user_input_thread;
 
 	while(1) {
 		memset(cmnd_buf, 0, COMMAND_BUFFER_SIZE);
-		fprintf(stdout, "%c ", prompt_char);
+		fprintf(stdout, "%c[2K", 27);
+		fprintf(stdout, "\r%c ", prompt_char);
 		fgets(cmnd_buf, sizeof(cmnd_buf), stdin);
 		if (strncasecmp(cmnd_buf, connect_to_chat_cmnd, strlen(connect_to_chat_cmnd)) == 0) {
 			for (i = 0; i < COMMAND_BUFFER_SIZE; ++i) {
@@ -308,6 +304,10 @@ static void handle_chat(void)
 			if(ret < 0) {
 				continue;
 			}
+			ret = init_handle_user_input_thread(&user_input_thread);
+			if(ret < 0) {
+				continue;
+			}
 			while(1) {
 				usleep(MIN_PACKET_TRANSMISSION_DELAY_US);
 				usleep(get_random_number(0) % MIN_PACKET_TRANSMISSION_DELAY_US);
@@ -315,14 +315,18 @@ static void handle_chat(void)
 					handle_dummy_packet_transmission();
 					g_queue_dummy_packet_transmission = 0;
 				}
+				if(g_close_current_chat) {
+					fprintf(stdout, "%s Closing conversation.\n", feedback_tag);
+					break;
+				}
 			}
 		} else if (strncasecmp(cmnd_buf, exit_cmnd, strlen(exit_cmnd)) == 0) {
 			exit(0);
 		} else if (strncasecmp(cmnd_buf, help_cmnd, strlen(help_cmnd)) == 0) {
-			fprintf(stdout, "\t%s <friend id>\tInitiate chat with <friend id>\n", connect_to_chat_cmnd);
-			fprintf(stdout, "\t%s\tPerform a network connectivity test\n", network_connectivity_test_cmnd);
-			fprintf(stdout, "\t%s\tExit Breadcrumb\n", exit_cmnd);
-			fprintf(stdout, "\t%s\tDisplay this help dialog\n", help_cmnd);
+			fprintf(stdout, "%s <friend id>\tInitiate chat with <friend id>\n", connect_to_chat_cmnd);
+			fprintf(stdout, "%s\t\tPerform a network connectivity test\n", network_connectivity_test_cmnd);
+			fprintf(stdout, "%s\t\t\tExit Breadcrumb\n", exit_cmnd);
+			fprintf(stdout, "%s\t\t\tDisplay this help dialog\n", help_cmnd);
 		} else {
 			fprintf(stdout, "Unrecognized command: ");
 			for (i = 0; i < COMMAND_BUFFER_SIZE; ++i) {
@@ -353,7 +357,56 @@ static int init_new_conversation_with_name(char *friend_name)
 		return -1;
 	}
 
+	g_close_current_chat = 0;
+
 	return 0;
+}
+
+static int init_handle_user_input_thread(pthread_t *user_input_thread)
+{
+	int ret; 
+
+	if(user_input_thread == NULL) {
+		return -1;
+	}
+
+	ret = pthread_create(user_input_thread, NULL, user_input_handler, NULL);
+	if(ret != 0) {
+		#ifdef ENABLE_LOGGING
+			fprintf(stdout, "[MAIN THREAD] Failed to create user input thread, %s\n", strerror(errno));
+		#endif
+
+		return -1;
+	}
+
+	return 0;
+}
+
+void *user_input_handler(void *ptr)
+{
+	char *pthread_ret;
+	char buf[USER_INPUT_BUF_LEN];
+
+	#ifdef ENABLE_USER_INPUT_THREAD_LOGGING
+		fprintf(stdout, "[USER INPUT THREAD] User input thread begin\n");
+	#endif
+
+	while(1) {
+		usleep(200000);
+
+		fprintf(stdout, "%s ", my_chat_tag);
+
+		fgets(buf, sizeof(buf), stdin);
+		if (strncasecmp(buf, close_cmnd, strlen(close_cmnd)) == 0) {
+			g_close_current_chat = 1;
+			break;
+		} else if (strncasecmp(buf, exit_cmnd, strlen(exit_cmnd)) == 0) {
+			exit(0);
+		}
+	}
+
+	pthread_ret = (char *)0;
+	pthread_exit(pthread_ret);
 }
 
 static int init_receive_packet_thread(pthread_t *receive_packet_thread)
@@ -687,9 +740,8 @@ static int handle_packet_transmission(int should_send_packet, int *did_send_pack
 				fprintf(stdout, "[SEND PACKET THREAD] Failed to send packet to relay, ip = %s\n", g_sp_node->destination_ip);
 			#endif
 
-			#ifdef ENABLE_STANDARD_LOGGING
-				fprintf(stdout, "Fatal connection error occurred, err_code=%x\n", (unsigned int)ENTRY_RELAY_OFFLINE);
-			#endif
+			fprintf(stdout, "%s Fatal connection error occurred, err_code=%x\n", feedback_tag, (unsigned int)ENTRY_RELAY_OFFLINE);
+
 			exit(0);
 		}
 
@@ -913,18 +965,16 @@ static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 		return -1;
 	}
 	if(strlen(friend_name) > USER_NAME_MAX_LENGTH) {
-		fprintf(stdout, "Friend ID must be less than %d characters\n", USER_NAME_MAX_LENGTH);
+		fprintf(stdout, "%s Friend ID must be less than %d characters\n", feedback_tag, USER_NAME_MAX_LENGTH);
 		return -1;
 	}
 	if(strlen(friend_name) < USER_NAME_MIN_LENGTH) {
-		fprintf(stdout, "Friend ID must be more than %d characters\n", USER_NAME_MIN_LENGTH);
+		fprintf(stdout, "%s Friend ID must be more than %d characters\n", feedback_tag, USER_NAME_MIN_LENGTH);
 		return -1;
 	}
 
-	#ifdef ENABLE_STANDARD_LOGGING
-		fprintf(stdout, "Initializing conversation.");
-		fflush(stdout);
-	#endif
+	fprintf(stdout, "%s Initializing conversation.", feedback_tag);
+	fflush(stdout);
 
 	memset(ci_out, 0, sizeof(conversation_info));
 	get_sha256_hash_of_string("[MAIN THREAD]", ID_HASH_COUNT, (const char *)friend_name, &hashval, &hashval_len);
@@ -999,10 +1049,8 @@ static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 	#ifdef ENABLE_LOGGING
 		print_conversation("[MAIN THREAD]", ci_out);
 	#endif
-	#ifdef ENABLE_STANDARD_LOGGING 
-		fprintf(stdout, "done\nInitializing networking.");
-		fflush(stdout);
-	#endif
+	fprintf(stdout, "done\n%s Initializing networking.", feedback_tag);
+	fflush(stdout);
 
 	ret = perform_user_id_registration("[MAIN THREAD]", ci_out);
 	if(ret < 0) {
@@ -1014,9 +1062,7 @@ static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 		return -1;
 	}
 
-	#ifdef ENABLE_STANDARD_LOGGING
-		fprintf(stdout, "done\n");
-	#endif
+	fprintf(stdout, "done\n");
 
 	return ret;
 }
@@ -1163,10 +1209,8 @@ static int get_relay_public_certificates_debug(conversation_info *ci_info)
 		ci_info->ri_pool[i].public_cert = PEM_read_RSAPublicKey(fp_public_key, NULL, NULL, NULL);
 		fclose(fp_public_key);		
 	}
-	#ifdef ENABLE_STANDARD_LOGGING
-		fprintf(stdout, ".");
-		fflush(stdout);
-	#endif
+	fprintf(stdout, ".");
+	fflush(stdout);
 	
 	return 0;
 }
@@ -1215,10 +1259,8 @@ static int set_entry_relay_for_conversation(conversation_info *ci_info)
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "[MAIN THREAD] Set first relay = %s\n", ci_info->ri_pool[ci_info->index_of_entry_relay].relay_ip);
 	#endif
-	#ifdef ENABLE_STANDARD_LOGGING
-		fprintf(stdout, ".");
-		fflush(stdout);
-	#endif
+	fprintf(stdout, ".");
+	fflush(stdout);
 
 	return 0;
 }
@@ -1287,10 +1329,8 @@ static int set_relay_keys_for_conversation(conversation_info *ci_info)
 			}
 		}
 	}
-	#ifdef ENABLE_STANDARD_LOGGING
-		fprintf(stdout, ".");
-		fflush(stdout);
-	#endif
+	fprintf(stdout, ".");
+	fflush(stdout);
 
 	return 0;
 }
@@ -1311,10 +1351,8 @@ static int set_user_ids_for_conversation(conversation_info *ci_info)
 			generate_new_user_id(ci_info->ri_pool[i].max_uid, &(ci_info->ri_pool[i].current_key_info.return_route_payload_user_id));
 		}
 	}
-	#ifdef ENABLE_STANDARD_LOGGING
-		fprintf(stdout, ".");
-		fflush(stdout);
-	#endif
+	fprintf(stdout, ".");
+	fflush(stdout);
 
 	return 0;
 }
@@ -1389,10 +1427,8 @@ static int perform_user_id_registration(char *thread_id, conversation_info *ci_i
 		if((ci_info->ri_pool[relay_register_index].is_active == 1) && (relay_register_index != ci_info->index_of_entry_relay)) {
 			if(index_of_relays_registered[relay_register_index] == 0) {
 				wait_for_send_queue_empty(thread_id);
-				#ifdef ENABLE_STANDARD_LOGGING 
-					fprintf(stdout, ".");
-					fflush(stdout);
-				#endif
+				fprintf(stdout, ".");
+				fflush(stdout);
 
 				ret = send_packet(REGISTER_UIDS_WITH_RELAY, ci_info, NULL,  NULL, &relay_register_index);
 				if(ret < 0) {
@@ -1625,9 +1661,7 @@ static int update_is_active_flag_based_on_is_responsive_flag(char *thread_id, co
 
 	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
 		if((ci_info->ri_pool[i].is_active == 1) && (ci_info->ri_pool[i].is_responsive == 0)) {
-			#ifdef ENABLE_STANDARD_LOGGING
-				fprintf(stdout, "Unabled to reconnect to relay %d, removing it from relay pool\n", i);
-			#endif
+			fprintf(stdout, "%s Unabled to reconnect to relay %d, removing it from relay pool\n", feedback_tag, i);
 			ci_info->ri_pool[i].is_active = 0;
 		}
 	}
@@ -1647,9 +1681,7 @@ static int handle_potential_loss_of_nodes(conversation_info *ci_info)
 	if(verification_successful == 0) {
 		check_if_loss_of_relay_is_fatal("[MAIN THREAD]", ci_info, &fatal_connection_err);
 		if(fatal_connection_err) {
-			#ifdef ENABLE_STANDARD_LOGGING
-				fprintf(stdout, "Fatal connection error occurred, err_code=%x\n", (unsigned int)fatal_connection_err);
-			#endif
+			fprintf(stdout, "%s Fatal connection error occurred, err_code=%x\n", feedback_tag, (unsigned int)fatal_connection_err);
 
 			exit(0);
 		}
@@ -1908,9 +1940,7 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 		return -1;
 	}
 
-	#ifdef ENABLE_STANDARD_LOGGING
-		fprintf(stdout, "Detected network error, attempting to reconnect to relays\n");
-	#endif
+	fprintf(stdout, "%s Detected network error, attempting to reconnect to relays\n", feedback_tag);
 
 	*reconnected_to_all_relays = 0;
 	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
@@ -1918,9 +1948,7 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 			continue;
 		}
 		if((ci_info->ri_pool[i].is_active == 1) && (ci_info->ri_pool[i].is_responsive == 0)) {
-			#ifdef ENABLE_STANDARD_LOGGING
-				fprintf(stdout, "Relay %d.", i);
-			#endif
+			fprintf(stdout, "%s Relay %d.", feedback_tag, i);
 			if((i == 0) || (ci_info->ri_pool[i-1].is_responsive == 0)) {
 				ret = reconnect_to_entry_relay_via_key_history(thread_id, ci_info, APPLY_RETURN_KEY_HISTORY, &entry_relay_online);
 				if(ret < 0) {
@@ -1940,10 +1968,9 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 				}
 				fprintf(stdout, "\n");
 			#endif
-			#ifdef ENABLE_STANDARD_LOGGING
-				fprintf(stdout, ".");
-				fflush(stdout);
-			#endif
+			fprintf(stdout, ".");
+			fflush(stdout);
+
 			ret = verify_relay_online("[MAIN THREAD]", ci_info, i, DISABLE_HISTORY, VERIFY_USING_FORWARD_KEY_UID_PAIR, &relay_is_online);
 			if(ret < 0) {
 				return -1;
@@ -1994,10 +2021,9 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 						}
 						fprintf(stdout, "\n");
 					#endif
-					#ifdef ENABLE_STANDARD_LOGGING
-						fprintf(stdout, ".");
-						fflush(stdout);
-					#endif
+					fprintf(stdout, ".");
+					fflush(stdout);
+
 					ret = verify_relay_online("[MAIN THREAD]", ci_info, i, DISABLE_HISTORY, VERIFY_USING_FORWARD_KEY_UID_PAIR, &relay_is_online);
 					if(ret < 0) {
 						return -1;
@@ -2013,11 +2039,9 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 			if(relay_is_online) {
 				commit_key_info_to_history(ci_info);
 			}
+			fprintf(stdout, ".");
+			fflush(stdout);
 
-			#ifdef ENABLE_STANDARD_LOGGING
-				fprintf(stdout, ".");
-				fflush(stdout);
-			#endif
 			ret = verify_relay_online("[MAIN THREAD]", ci_info, i, DISABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, &relay_is_online);
 			if(ret < 0) {
 				return -1;
@@ -2069,10 +2093,9 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 						}
 						fprintf(stdout, "\n");
 					#endif
-					#ifdef ENABLE_STANDARD_LOGGING
-						fprintf(stdout, ".");
-						fflush(stdout);
-					#endif
+					fprintf(stdout, ".");
+					fflush(stdout);
+
 					ret = verify_relay_online("[MAIN THREAD]", ci_info, i, DISABLE_HISTORY, VERIFY_USING_RETURN_KEY_UID_PAIR, &relay_is_online);
 					if(ret < 0) {
 						return -1;
@@ -2090,9 +2113,8 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 				#ifdef ENABLE_LOGGING
 					fprintf(stdout, "%s Reconnect relay with index: %d and ip = %s\n", thread_id, i, ci_info->ri_pool[i].relay_ip);
 				#endif
-				#ifdef ENABLE_STANDARD_LOGGING
-					fprintf(stdout, "success\n");
-				#endif
+				fprintf(stdout, "success\n");
+
 
 				ci_info->ri_pool[i].is_responsive = 1;
 				commit_key_info_to_history(ci_info);
@@ -2100,9 +2122,7 @@ static int attempt_to_reconnect_unresponsive_relays_via_key_history(char *thread
 				#ifdef ENABLE_LOGGING
 					fprintf(stdout, "%s Failed to reconnect relay with index: %d and ip = %s\n", thread_id, i, ci_info->ri_pool[i].relay_ip);
 				#endif
-				#ifdef ENABLE_STANDARD_LOGGING
-					fprintf(stdout, "failed\n");
-				#endif
+				fprintf(stdout, "failed\n");
 
 				ci_info->ri_pool[i].is_responsive = 0;
 			}
