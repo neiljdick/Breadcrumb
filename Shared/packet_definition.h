@@ -12,6 +12,8 @@
 #define ONION_ROUTE_DATA_SIZE 					((AES_KEY_SIZE_BYTES * 2) + 32)
 #define PAYLOAD_SIZE_BYTES 						((ONION_ROUTE_DATA_SIZE * MAX_ROUTE_LENGTH) * 2)
 #define PACKET_SIZE_BYTES 						(((ONION_ROUTE_DATA_SIZE * MAX_ROUTE_LENGTH) * 2) + (sizeof(payload_data)))
+#define MAX_MESSAGE_SIZE 						(ONION_ROUTE_DATA_SIZE * 4)
+#define MESSAGE_OFFSET	 						(ONION_ROUTE_DATA_SIZE * 2)
 
 extern const unsigned int payload_start_byte;
 extern const unsigned int cipher_text_byte_offset;

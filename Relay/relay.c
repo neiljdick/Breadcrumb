@@ -816,6 +816,17 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 
 			send_packet_to_relay(packet_data, inet_ntoa(next_addr), next_port);
 		break;
+		case MESSAGE_PACKET:
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "%s Received message packet, onion_r1 = 0x%x, order = 0x%x, client_id = 0x%x, conversation_id = 0x%x. Dropping packet\n", 
+									thread_id, pd_ptr->onion_r1, pd_ptr->order, pd_ptr->client_id, pd_ptr->conversation_id);
+			#endif
+		break;
+		default:
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "%s Received unknown non-route packet, (type = %u). Dropping packet\n", thread_id, pd_ptr->type);
+			#endif
+		break;
 	}
 
 	return 0;

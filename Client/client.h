@@ -85,7 +85,8 @@ typedef enum {
 	REGISTER_UIDS_WITH_RELAY,
 	DUMMY_PACKET,
 	DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS,
-	DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS_FOR_VERIFICATION
+	DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS_FOR_VERIFICATION,
+	OUTGOING_MESSAGE_PACKET
 } packet_type;
 
 typedef enum {
@@ -153,9 +154,11 @@ typedef struct relay_info
 typedef struct conversation_info
 {
 	int conversation_valid;
-	char conversation_name[USER_NAME_MAX_LENGTH];
+	unsigned char conversation_name[USER_NAME_MAX_LENGTH];
 	int index_of_server_relay;
 	int index_of_entry_relay;
+	int index_of_friend_entry_relay;
+	short outgoing_msg_counter;
 	relay_info ri_pool[RELAY_POOL_MAX_SIZE];
 } conversation_info;
 
