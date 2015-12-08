@@ -1,13 +1,13 @@
 #include "relay.h"
 
 //#define LOG_TO_FILE_INSTEAD_OF_STDOUT
-//#define ENABLE_LOGGING
+#define ENABLE_LOGGING
 #define DEBUG_MODE
 //#define ENABLE_THREAD_LOGGING
 //#define PRINT_PACKETS
 #define ENABLE_LOG_ON_EXIT
 //#define RECORD_UIDS
-#define ENABLE_BANDWIDTH_REPORTING_UI
+//#define ENABLE_BANDWIDTH_REPORTING_UI
 
 sem_t keystore_sem, logging_sem;
 
@@ -873,6 +873,8 @@ void *handle_id_cache_thread(void *ptr)
 	set_key_for_user_id(buf, id_data->payload_relay_user_id, (key *)id_data->payload_aes_key);
 	set_key_for_user_id(buf, id_data->return_route_user_id, (key *)id_data->return_route_aes_key);
 	set_key_for_user_id(buf, id_data->return_route_payload_user_id, (key *)id_data->return_route_payload_aes_key);
+	set_key_for_user_id(buf, id_data->incoming_msg_relay_user_id, (key *)id_data->incoming_msg_aes_key);
+	set_key_for_user_id(buf, id_data->outgoing_msg_relay_user_id, (key *)id_data->outgoing_msg_aes_key);
 	sem_post(&keystore_sem);
 
 	sem_wait(&logging_sem);

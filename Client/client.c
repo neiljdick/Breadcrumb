@@ -1,7 +1,7 @@
 #include "client.h"
 
 //#define LOG_TO_FILE_INSTEAD_OF_STDOUT
-//#define ENABLE_LOGGING
+#define ENABLE_LOGGING
 //#define ENABLE_TRANSMIT_RECEIVE_LOGGING
 //#define ENABLE_KEY_HISTORY_LOGGING
 //#define ENABLE_BANDWIDTH_LOGGING
@@ -77,6 +77,7 @@ static int initialize_should_receive_dummy_packet_command(void);
 static char get_send_packet_char(void);
 static int commit_current_key_info_to_history(relay_info *r_info);
 static int commit_key_info_to_history(conversation_info *ci_info);
+static int create_and_add_user_message_to_queue(conversation_info *ci_info, char *msg);
 static int commit_route_info_to_history(packet_type type, conversation_info *info, route_info *r_info, route_info *return_r_info, void *arg);
 static int print_key_history(relay_info *r_info);
 static int print_return_key_history(relay_info *r_info);
@@ -402,6 +403,8 @@ void *user_input_handler(void *ptr)
 			break;
 		} else if (strncasecmp(buf, exit_cmnd, strlen(exit_cmnd)) == 0) {
 			exit(0);
+		} else {
+			create_and_add_user_message_to_queue(&(g_conversations[g_current_conversation_index]), buf);
 		}
 	}
 
@@ -1275,6 +1278,8 @@ static int reset_relay(char *thread_id, relay_info* r_info)
 
 	memset(&(r_info->current_key_info), 0, sizeof(r_info->current_key_info));
 	memset(&(r_info->key_info_history), 0, sizeof(r_info->key_info_history));
+	memset(&(r_info->current_msg_key_info), 0, sizeof(r_info->current_msg_key_info));
+	memset(&(r_info->msg_key_info_history), 0, sizeof(r_info->msg_key_info_history));
 	r_info->kih_index = 0;
 
 	ret = generate_AES_key(r_info->current_key_info.aes_key, AES_KEY_SIZE_BYTES);
@@ -1297,6 +1302,17 @@ static int reset_relay(char *thread_id, relay_info* r_info)
 	generate_new_user_id(r_info->max_uid, &(r_info->current_key_info.payload_relay_user_id));
 	generate_new_user_id(r_info->max_uid, &(r_info->current_key_info.return_route_user_id));
 	generate_new_user_id(r_info->max_uid, &(r_info->current_key_info.return_route_payload_user_id));
+
+	ret = generate_AES_key(r_info->current_msg_key_info.incoming_msg_aes_key, AES_KEY_SIZE_BYTES);
+	if(ret < 0) {
+		return -1;
+	}
+	ret = generate_AES_key(r_info->current_msg_key_info.outgoing_msg_aes_key, AES_KEY_SIZE_BYTES);
+	if(ret < 0) {
+		return -1;
+	}
+	generate_new_user_id(r_info->max_uid, &(r_info->current_msg_key_info.incoming_msg_relay_user_id));
+	generate_new_user_id(r_info->max_uid, &(r_info->current_msg_key_info.outgoing_msg_relay_user_id));
 
 	return 0;
 }
@@ -1327,6 +1343,14 @@ static int set_relay_keys_for_conversation(conversation_info *ci_info)
 			if(ret < 0) {
 				return -1;
 			}
+			ret = generate_AES_key(ci_info->ri_pool[i].current_msg_key_info.incoming_msg_aes_key, AES_KEY_SIZE_BYTES);
+			if(ret < 0) {
+				return -1;
+			}
+			ret = generate_AES_key(ci_info->ri_pool[i].current_msg_key_info.outgoing_msg_aes_key, AES_KEY_SIZE_BYTES);
+			if(ret < 0) {
+				return -1;
+			}
 		}
 	}
 	fprintf(stdout, ".");
@@ -1349,6 +1373,8 @@ static int set_user_ids_for_conversation(conversation_info *ci_info)
 			generate_new_user_id(ci_info->ri_pool[i].max_uid, &(ci_info->ri_pool[i].current_key_info.payload_relay_user_id));
 			generate_new_user_id(ci_info->ri_pool[i].max_uid, &(ci_info->ri_pool[i].current_key_info.return_route_user_id));
 			generate_new_user_id(ci_info->ri_pool[i].max_uid, &(ci_info->ri_pool[i].current_key_info.return_route_payload_user_id));
+			generate_new_user_id(ci_info->ri_pool[i].max_uid, &(ci_info->ri_pool[i].current_msg_key_info.incoming_msg_relay_user_id));
+			generate_new_user_id(ci_info->ri_pool[i].max_uid, &(ci_info->ri_pool[i].current_msg_key_info.outgoing_msg_relay_user_id));
 		}
 	}
 	fprintf(stdout, ".");
@@ -2824,6 +2850,17 @@ static int send_dummy_packet_with_routes_defined(conversation_info *ci_info, rou
 	return 0;
 }
 
+static int create_and_add_user_message_to_queue(conversation_info *ci_info, char *msg)
+{
+	if((ci_info == NULL) || (msg == NULL)) {
+		return -1;
+	}
+
+
+
+	return 0;
+}
+
 static int generate_packet_metadata(conversation_info *ci_info, payload_type p_type, route_info *return_r_info, payload_data *payload)
 {
 	uint64_t ip_first_return_relay;
@@ -2923,6 +2960,10 @@ static int create_packet(packet_type type, conversation_info *ci_info, route_inf
 			ic_data.return_route_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.return_route_user_id;
 			memcpy(ic_data.return_route_payload_aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.return_route_payload_aes_key, AES_KEY_SIZE_BYTES);
 			ic_data.return_route_payload_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].current_key_info.return_route_payload_user_id;
+			memcpy(ic_data.incoming_msg_aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].current_msg_key_info.incoming_msg_aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.incoming_msg_relay_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].current_msg_key_info.incoming_msg_relay_user_id;
+			memcpy(ic_data.outgoing_msg_aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].current_msg_key_info.outgoing_msg_aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.outgoing_msg_relay_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].current_msg_key_info.outgoing_msg_relay_user_id;
 			
 			ret = RSA_public_encrypt(sizeof(id_cache_data), (unsigned char *)&ic_data, (packet + payload_start_byte), ci_info->ri_pool[ci_info->index_of_entry_relay].public_cert, RSA_PKCS1_OAEP_PADDING);
 			if(ret != RSA_KEY_LENGTH_BYTES) {
@@ -2981,6 +3022,7 @@ static int create_packet(packet_type type, conversation_info *ci_info, route_inf
 			get_ord_packet_checksum(&(or_payload_data[0].ord_enc), &(or_payload_data[0].ord_enc.ord_checksum));
 
 			memcpy(encrypt_buffer, &(or_payload_data[0]), sizeof(onion_route_data));
+
 			memcpy(ic_data.aes_key, ci_info->ri_pool[relay_register_index].current_key_info.aes_key, AES_KEY_SIZE_BYTES);
 			ic_data.relay_user_id = ci_info->ri_pool[relay_register_index].current_key_info.relay_user_id;	
 			memcpy(ic_data.payload_aes_key, ci_info->ri_pool[relay_register_index].current_key_info.payload_aes_key, AES_KEY_SIZE_BYTES);
@@ -2989,6 +3031,10 @@ static int create_packet(packet_type type, conversation_info *ci_info, route_inf
 			ic_data.return_route_user_id = ci_info->ri_pool[relay_register_index].current_key_info.return_route_user_id;
 			memcpy(ic_data.return_route_payload_aes_key, ci_info->ri_pool[relay_register_index].current_key_info.return_route_payload_aes_key, AES_KEY_SIZE_BYTES);
 			ic_data.return_route_payload_user_id = ci_info->ri_pool[relay_register_index].current_key_info.return_route_payload_user_id;
+			memcpy(ic_data.incoming_msg_aes_key, ci_info->ri_pool[relay_register_index].current_msg_key_info.incoming_msg_aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.incoming_msg_relay_user_id = ci_info->ri_pool[relay_register_index].current_msg_key_info.incoming_msg_relay_user_id;
+			memcpy(ic_data.outgoing_msg_aes_key, ci_info->ri_pool[relay_register_index].current_msg_key_info.outgoing_msg_aes_key, AES_KEY_SIZE_BYTES);
+			ic_data.outgoing_msg_relay_user_id = ci_info->ri_pool[relay_register_index].current_msg_key_info.outgoing_msg_relay_user_id;
 			
 			ret = RSA_public_encrypt(sizeof(id_cache_data), (unsigned char *)&ic_data, (encrypt_buffer + (sizeof(onion_route_data))), 
 										ci_info->ri_pool[relay_register_index].public_cert, RSA_PKCS1_OAEP_PADDING);
@@ -4015,6 +4061,18 @@ __attribute__((unused)) static int print_conversation(char *thread_id, conversat
 			}
 			fprintf(stdout, "%s Return Route Relay Key = %s\n", thread_id, buf);
 			fprintf(stdout, "%s Return Route Relay User ID = %u\n", thread_id, ci_info->ri_pool[i].current_key_info.return_route_payload_user_id);
+
+			for (j = 0; j < AES_KEY_SIZE_BYTES; j++) {
+				sprintf((buf + (j*2)), "%02x", 0xff & ci_info->ri_pool[i].current_msg_key_info.incoming_msg_aes_key[j]);
+			}
+			fprintf(stdout, "%s Incoming Message Relay Key = %s\n", thread_id, buf);
+			fprintf(stdout, "%s Incoming Message Relay User ID = %u\n", thread_id, ci_info->ri_pool[i].current_msg_key_info.incoming_msg_relay_user_id);
+
+			for (j = 0; j < AES_KEY_SIZE_BYTES; j++) {
+				sprintf((buf + (j*2)), "%02x", 0xff & ci_info->ri_pool[i].current_msg_key_info.outgoing_msg_aes_key[j]);
+			}
+			fprintf(stdout, "%s Outgoing Message Relay Key = %s\n", thread_id, buf);
+			fprintf(stdout, "%s Outgoing Message Relay User ID = %u\n", thread_id, ci_info->ri_pool[i].current_msg_key_info.outgoing_msg_relay_user_id);
 		}
 	}
 	fprintf(stdout, "%s ------------------------------------\n", thread_id);
