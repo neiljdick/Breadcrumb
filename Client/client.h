@@ -151,6 +151,12 @@ typedef struct relay_info
 	RSA *public_cert;
 } relay_info;
 
+typedef struct route_info
+{
+	int relay_route[MAX_ROUTE_LENGTH];
+	int route_length;
+} route_info;
+
 typedef struct conversation_info
 {
 	int conversation_valid;
@@ -159,14 +165,9 @@ typedef struct conversation_info
 	int index_of_entry_relay;
 	int index_of_friend_entry_relay;
 	short outgoing_msg_counter;
+	route_info incoming_message_routes_to_supply[RELAY_POOL_MAX_SIZE];
 	relay_info ri_pool[RELAY_POOL_MAX_SIZE];
 } conversation_info;
-
-typedef struct route_info
-{
-	int relay_route[MAX_ROUTE_LENGTH];
-	int route_length;
-} route_info;
 
 typedef struct route_pair
 {

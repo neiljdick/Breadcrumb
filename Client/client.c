@@ -92,6 +92,7 @@ static void handle_chat(void);
 static int init_new_conversation_with_name(char *friend_name);
 static int perform_user_id_init(const char *user_id_raw);
 static int init_chat(char *friend_name, conversation_info *ci_out /* out */);
+static int initialize_incoming_routes_to_supply(conversation_info *ci_out);
 static int get_relay_public_certificates_debug(conversation_info *ci_info);
 static int set_entry_relay_for_conversation(conversation_info *ci_info);
 static int set_relay_keys_for_conversation(conversation_info *ci_info);
@@ -699,7 +700,7 @@ static int get_current_average_bandwidth(float *current_average_bandwidth)
 	total_time_sec = 0;
 	for(i = 0; i < BANDWIDTH_ST_LENGTH; ++i) {
 		total_time_sec += g_bandwidth_data.b_st[i].timediff_sec;
-		if(g_bandwidth_data.b_st[i].sent_packet) {
+		if(g_bandwidth_data.b_st[i].sent_packet) { // TODO Also need to include any incoming packets!
 			total_packets++;
 		}
 	}
@@ -1061,6 +1062,10 @@ static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 	if(ret < 0) {
 		return -1;
 	}
+	ret = initialize_incoming_routes_to_supply(ci_out);
+	if(ret < 0) {
+		return -1;
+	}
 
 	#ifdef ENABLE_LOGGING
 		print_conversation("[MAIN THREAD]", ci_out);
@@ -1094,6 +1099,48 @@ static int get_index_of_next_free_conversation(conversation_info *conversations)
 	}
 
 	return -1;
+}
+
+static int initialize_incoming_routes_to_supply(conversation_info *ci_out)
+{
+	int i, current_im_route;
+	route_info r_info_tmp;
+
+	if(ci_out == NULL) {
+		return -1;
+	}
+
+	current_im_route = 0;	
+	r_info_tmp.route_length = MIN_ROUTE_LENGTH; // TODO what if MIN_ROUTE_LENGTH changes and is no longer == 2?
+	r_info_tmp.relay_route[r_info_tmp.route_length - 1] = ci_out->index_of_entry_relay;
+	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
+		if(ci_out->ri_pool[i].is_active == 0) {
+			continue;
+		} else if(ci_out->ri_pool[i].is_responsive == 0) {
+			continue;
+		} else if(i == ci_out->index_of_entry_relay) {
+			continue;
+		} else if(i == ci_out->index_of_server_relay) {
+			continue;
+		}
+		r_info_tmp.relay_route[0] = i;
+
+		memcpy(&(ci_out->incoming_message_routes_to_supply[current_im_route]), &r_info_tmp, sizeof(route_info));
+		current_im_route++;
+	}	
+
+	#ifdef ENABLE_LOGGING
+	int j;
+	for (i = 0; i < current_im_route; ++i) {
+		fprintf(stdout, "Incoming route (%d): ", i);	
+		for (j = 0; j < MIN_ROUTE_LENGTH; ++j) {
+			fprintf(stdout, "%u ", ci_out->incoming_message_routes_to_supply[i].relay_route[j]);
+		}
+		fprintf(stdout, "\n");
+	}
+	#endif
+
+	return 0;
 }
 
 static int get_relay_public_certificates_debug(conversation_info *ci_info)
