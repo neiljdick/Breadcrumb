@@ -110,6 +110,7 @@ static int send_dummy_packet_with_routes_defined(conversation_info *ci_info, rou
 static int generate_random_route(conversation_info *ci_info, route_info *r_info);
 static int generate_random_message_route(conversation_info *ci_info, route_info *r_info);
 static int generate_random_outgoing_message_route(conversation_info *ci_info, route_info *im_route);
+static int get_msg_route_from_route_hash(conversation_info *ci_info, uint16_t onion_hash, route_info *r_info /* out */);
 static int generate_onion_route_data_from_route_info(conversation_info *ci_info, route_info *r_info, unsigned char *packet);
 static int generate_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */);
 static int generate_return_onion_route_data_from_route_info(conversation_info *ci_info, route_info *return_r_info, unsigned char *packet);
@@ -1029,6 +1030,10 @@ static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 		ci_out->ri_pool[1].is_active = 1;
 		ci_out->ri_pool[2].is_active = 1;
 		ci_out->ri_pool[3].is_active = 1;
+		ci_out->ri_pool[0].is_responsive = 1;
+		ci_out->ri_pool[1].is_responsive = 1;
+		ci_out->ri_pool[2].is_responsive = 1;
+		ci_out->ri_pool[3].is_responsive = 1;
 		ci_out->conversation_valid = 1;
 
 		ret = get_relay_public_certificates_debug(ci_out);
@@ -2947,13 +2952,6 @@ static int create_and_add_user_message_to_queue(conversation_info *ci_info, char
 	if(ret < 0) {
 		return -1;
 	}
-
-	int i;
-	for (i = 0; i < im_route.route_length; ++i) {
-		fprintf(stdout, "%d ", im_route.relay_route[i]);
-	}
-	fprintf(stdout, "\n");
-
 	ret = generate_outgoing_message_onion_route_from_route_info(ci_info, &im_route, (unsigned char *)&(msg_packet_payload.payload));
 	if(ret < 0) {
 		return -1;
@@ -3864,6 +3862,47 @@ static int generate_outgoing_message_onion_route_from_route_info(conversation_in
 	}
 
 	return 0;
+}
+
+static int get_msg_route_from_route_hash(conversation_info *ci_info, uint16_t onion_hash, route_info *r_info /* out */)
+{
+	int i, j;
+	route_info r_info_tmp;
+	uint16_t onion_hash_tmp;
+
+	if((ci_info == NULL) || (r_info == NULL)) {
+		return -1;
+	}
+
+	r_info_tmp.route_length = MIN_ROUTE_LENGTH;
+	r_info_tmp.relay_route[r_info_tmp.route_length - 1] = ci_info->index_of_entry_relay;
+
+	for (i = 0; i < RELAY_POOL_MAX_SIZE; ++i) {
+		if(ci_info->ri_pool[i].is_active == 0) {
+			continue;
+		} else if(ci_info->ri_pool[i].is_responsive == 0) {
+			continue;
+		} else if(i == ci_info->index_of_entry_relay) {
+			continue;
+		} else if(i == ci_info->index_of_server_relay) {
+			continue;
+		}
+		r_info_tmp.relay_route[0] = i;
+
+		onion_hash_tmp = 0;
+		for (j = 0; j < r_info_tmp.route_length; ++j) {
+			onion_hash_tmp ^= (((uint16_t)(char_to_hex(ci_info->ri_pool[r_info_tmp.relay_route[j]].relay_id[j]) << 4) | (uint16_t)char_to_hex(ci_info->ri_pool[r_info_tmp.relay_route[j]].relay_id[j+1])) << 8);
+			onion_hash_tmp ^= ((uint16_t)(char_to_hex(ci_info->ri_pool[r_info_tmp.relay_route[j]].relay_id[j+2]) << 4) | (uint16_t)char_to_hex(ci_info->ri_pool[r_info_tmp.relay_route[j]].relay_id[j+3]));
+			onion_hash_tmp ^= (((uint16_t)(ci_info->conversation_name[j*2]) << 8) | ((uint16_t)ci_info->conversation_name[(j*2)+1]));
+
+			if(onion_hash_tmp == onion_hash) {
+				memcpy(r_info, &r_info_tmp, sizeof(route_info));
+				return 0;
+			}
+		}
+	}
+
+	return -1;
 }
 
 static int place_packet_on_send_queue(unsigned char *packet, char *destination_ip, int destination_port)
