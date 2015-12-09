@@ -794,6 +794,7 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 	struct in_addr next_addr;
 	uint16_t next_port;
 	unsigned char packet_data[packet_size_bytes];
+	char onion_r1_ip[RELAY_IP_MAX_LENGTH], onion_r2_ip[RELAY_IP_MAX_LENGTH];
 
 	switch(pd_ptr->type) {
 		case DUMMY_PACKET_NO_RETURN_ROUTE:
@@ -824,8 +825,10 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 		break;
 		case DUAL_RETURN_ROUTE:
 			#ifdef ENABLE_LOGGING
-				fprintf(stdout, "%s Received return route packet, onion_r1 = 0x%x, onion_r2 = 0x%x, client_id = 0x%x, conversation_id = 0x%x. Dropping packet\n", 
-									thread_id, pd_ptr->onion_r1, pd_ptr->onion_r2, pd_ptr->client_id, pd_ptr->conversation_id);
+				memcpy(onion_r1_ip, pd_ptr->payload, RELAY_IP_MAX_LENGTH);
+				memcpy(onion_r2_ip, pd_ptr->payload + RELAY_IP_MAX_LENGTH, RELAY_IP_MAX_LENGTH);
+				fprintf(stdout, "%s Received return route packet, onion_r1 = 0x%x, onion_r2 = 0x%x, client_id = 0x%x, conversation_id = 0x%x onion_r1_ip = %s, onion_r1_ip = %s. Dropping packet\n", 
+										thread_id, pd_ptr->onion_r1, pd_ptr->onion_r2, pd_ptr->client_id, pd_ptr->conversation_id, onion_r1_ip, onion_r2_ip);
 			#endif
 		break;
 		default:

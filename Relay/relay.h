@@ -65,6 +65,8 @@ const char *unknown_str 			= "UNKNOWN";
 
 #define TCP_BYTES_OVERHEAD 				(502)
 
+#define RELAY_IP_MAX_LENGTH				(16)
+
 typedef struct client_thread_description
 {
 	pthread_t thread_id;

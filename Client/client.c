@@ -13,7 +13,7 @@
 //#define PRINT_PACKETS
 //#define UID_CLASH_ENABLE
 //#define PRINT_UID_GENERATION
-//#define FIRST_CLIENT
+#define FIRST_CLIENT
 #define TEST_RR_PACKET
 
 #ifdef UID_CLASH_ENABLE
@@ -124,7 +124,7 @@ static int generate_onion_route_data_from_route_info_using_rr_pairs(conversation
 static int generate_onion_route_payload_from_route_info_using_rr_pairs(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */);
 static int generate_onion_route_data_from_route_info_verify_using_rr_pairs(conversation_info *ci_info, route_info *r_info, unsigned char *packet);
 static int generate_onion_route_payload_from_route_info_verify_using_rr_pairs(conversation_info *ci_info, route_info *r_info, payload_data *payload, unsigned char *packet /* out */);
-static int generate_packet_metadata(conversation_info *ci_info, payload_type p_type, route_info *return_r_info, route_info *return_r_info2, payload_data *payload);
+static int generate_packet_metadata(conversation_info *ci_info, payload_type p_type, route_info *return_r_info, route_info *return_r_info2, payload_data *payload_d);
 static int generate_incoming_message_onion_routes_from_routes_to_supply(conversation_info *ci_info, route_info *im_route_supplied1, route_info *im_route_supplied2, unsigned char *packet);
 static int generate_incoming_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *return_r_info, int is_onion_r1, unsigned char *packet);
 static int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info, payload_data *payload, void *other);
@@ -3096,44 +3096,42 @@ static int send_incoming_message_return_route_packet(conversation_info *ci_info)
 		return -1;
 	}
 
-	fprintf(stdout, "here3\n");
-
 	return 0;
 }
 
-static int generate_packet_metadata(conversation_info *ci_info, payload_type p_type, route_info *return_r_info, route_info *return_r_info2, payload_data *payload)
+static int generate_packet_metadata(conversation_info *ci_info, payload_type p_type, route_info *return_r_info, route_info *return_r_info2, payload_data *payload_d)
 {
 	int i, route_index;
 	uint64_t ip_first_return_relay;
 
-	if((ci_info == NULL) || (payload == NULL)) {
+	if((ci_info == NULL) || (payload_d == NULL)) {
 		return -1;
 	}
 
 	switch(p_type) {
 		case DUMMY_PACKET_NO_RETURN_ROUTE:
-			payload->type = DUMMY_PACKET_NO_RETURN_ROUTE;
+			payload_d->type = DUMMY_PACKET_NO_RETURN_ROUTE;
 		break;
 		case DUMMY_PACKET_W_RETURN_ROUTE:
 			if(return_r_info == NULL) {
 				return -1;
 			}
-			payload->type = DUMMY_PACKET_W_RETURN_ROUTE;
-			payload->onion_r1 = ci_info->ri_pool[return_r_info->relay_route[0]].relay_port;
+			payload_d->type = DUMMY_PACKET_W_RETURN_ROUTE;
+			payload_d->onion_r1 = ci_info->ri_pool[return_r_info->relay_route[0]].relay_port;
 			inet_aton(ci_info->ri_pool[return_r_info->relay_route[0]].relay_ip, (struct in_addr *)&ip_first_return_relay);
-			payload->client_id = (uint32_t)((ip_first_return_relay >> 32) & 0xFFFFFFFF);
-			payload->conversation_id = (uint32_t)(ip_first_return_relay & 0xFFFFFFFF);
+			payload_d->client_id = (uint32_t)((ip_first_return_relay >> 32) & 0xFFFFFFFF);
+			payload_d->conversation_id = (uint32_t)(ip_first_return_relay & 0xFFFFFFFF);
 		break;
 		case SINGLE_RETURN_ROUTE:
-			payload->type = SINGLE_RETURN_ROUTE;
+			payload_d->type = SINGLE_RETURN_ROUTE;
 			// TODO
 		break;
 		case DUAL_RETURN_ROUTE:
 			if((return_r_info == NULL) || (return_r_info2 == NULL)) {
 				return -1;
 			}
-			payload->type = DUAL_RETURN_ROUTE;
-			payload->onion_r1 = 0;
+			payload_d->type = DUAL_RETURN_ROUTE;
+			payload_d->onion_r1 = 0;
 			for (i = 0; i < return_r_info->route_length; i++) {
 				if(i > RELAY_POOL_MAX_SIZE) {
 					return -1;
@@ -3142,11 +3140,11 @@ static int generate_packet_metadata(conversation_info *ci_info, payload_type p_t
 				if(ci_info->ri_pool[route_index].is_active == 0) {
 					return -1;
 				}
-				payload->onion_r1 ^= (((uint16_t)(char_to_hex(ci_info->ri_pool[route_index].relay_id[i]) << 4) | (uint16_t)char_to_hex(ci_info->ri_pool[route_index].relay_id[i+1])) << 8);
-				payload->onion_r1 ^= ((uint16_t)(char_to_hex(ci_info->ri_pool[route_index].relay_id[i+2]) << 4) | (uint16_t)char_to_hex(ci_info->ri_pool[route_index].relay_id[i+3]));
-				payload->onion_r1 ^= (((uint16_t)(ci_info->conversation_name[i*2]) << 8) | ((uint16_t)ci_info->conversation_name[(i*2)+1]));
+				payload_d->onion_r1 ^= (((uint16_t)(char_to_hex(ci_info->ri_pool[route_index].relay_id[i]) << 4) | (uint16_t)char_to_hex(ci_info->ri_pool[route_index].relay_id[i+1])) << 8);
+				payload_d->onion_r1 ^= ((uint16_t)(char_to_hex(ci_info->ri_pool[route_index].relay_id[i+2]) << 4) | (uint16_t)char_to_hex(ci_info->ri_pool[route_index].relay_id[i+3]));
+				payload_d->onion_r1 ^= (((uint16_t)(ci_info->conversation_name[i*2]) << 8) | ((uint16_t)ci_info->conversation_name[(i*2)+1]));
 			}
-			payload->onion_r2 = 0;
+			payload_d->onion_r2 = 0;
 			for (i = 0; i < return_r_info2->route_length; i++) {
 				if(i > RELAY_POOL_MAX_SIZE) {
 					return -1;
@@ -3155,20 +3153,23 @@ static int generate_packet_metadata(conversation_info *ci_info, payload_type p_t
 				if(ci_info->ri_pool[route_index].is_active == 0) {
 					return -1;
 				}
-				payload->onion_r2 ^= (((uint16_t)(char_to_hex(ci_info->ri_pool[route_index].relay_id[i]) << 4) | (uint16_t)char_to_hex(ci_info->ri_pool[route_index].relay_id[i+1])) << 8);
-				payload->onion_r2 ^= ((uint16_t)(char_to_hex(ci_info->ri_pool[route_index].relay_id[i+2]) << 4) | (uint16_t)char_to_hex(ci_info->ri_pool[route_index].relay_id[i+3]));
-				payload->onion_r2 ^= (((uint16_t)(ci_info->conversation_name[i*2]) << 8) | ((uint16_t)ci_info->conversation_name[(i*2)+1]));
+				payload_d->onion_r2 ^= (((uint16_t)(char_to_hex(ci_info->ri_pool[route_index].relay_id[i]) << 4) | (uint16_t)char_to_hex(ci_info->ri_pool[route_index].relay_id[i+1])) << 8);
+				payload_d->onion_r2 ^= ((uint16_t)(char_to_hex(ci_info->ri_pool[route_index].relay_id[i+2]) << 4) | (uint16_t)char_to_hex(ci_info->ri_pool[route_index].relay_id[i+3]));
+				payload_d->onion_r2 ^= (((uint16_t)(ci_info->conversation_name[i*2]) << 8) | ((uint16_t)ci_info->conversation_name[(i*2)+1]));
 			}
-			payload->client_id = (((uint32_t)g_user_id[0]) << 24) | (((uint32_t)g_user_id[1]) << 16) | (((uint32_t)g_user_id[2]) << 8) | ((uint32_t)g_user_id[3]);
-			payload->conversation_id = (((uint32_t)ci_info->conversation_name[0]) << 24) | (((uint32_t)ci_info->conversation_name[1]) << 16) | 
+			payload_d->client_id = (((uint32_t)g_user_id[0]) << 24) | (((uint32_t)g_user_id[1]) << 16) | (((uint32_t)g_user_id[2]) << 8) | ((uint32_t)g_user_id[3]);
+			payload_d->conversation_id = (((uint32_t)ci_info->conversation_name[0]) << 24) | (((uint32_t)ci_info->conversation_name[1]) << 16) | 
 											(((uint32_t)ci_info->conversation_name[2]) << 8) | ((uint32_t)ci_info->conversation_name[3]);
+
+			memcpy(payload_d->payload, ci_info->ri_pool[return_r_info->relay_route[0]].relay_ip, RELAY_IP_MAX_LENGTH);
+			memcpy(payload_d->payload + RELAY_IP_MAX_LENGTH, ci_info->ri_pool[return_r_info2->relay_route[0]].relay_ip, RELAY_IP_MAX_LENGTH);
 		break;
 		case MESSAGE_PACKET:
 			if(return_r_info == NULL) {
 				return -1;
 			}
-			payload->type = MESSAGE_PACKET;
-			payload->onion_r1 = 0;
+			payload_d->type = MESSAGE_PACKET;
+			payload_d->onion_r1 = 0;
 			for (i = 0; i < return_r_info->route_length; i++) {
 				if(i > RELAY_POOL_MAX_SIZE) {
 					return -1;
@@ -3177,13 +3178,13 @@ static int generate_packet_metadata(conversation_info *ci_info, payload_type p_t
 				if(ci_info->ri_pool[route_index].is_active == 0) {
 					return -1;
 				}
-				payload->onion_r1 ^= (((uint16_t)(char_to_hex(ci_info->ri_pool[route_index].relay_id[i]) << 4) | (uint16_t)char_to_hex(ci_info->ri_pool[route_index].relay_id[i+1])) << 8);
-				payload->onion_r1 ^= ((uint16_t)(char_to_hex(ci_info->ri_pool[route_index].relay_id[i+2]) << 4) | (uint16_t)char_to_hex(ci_info->ri_pool[route_index].relay_id[i+3]));
-				payload->onion_r1 ^= (((uint16_t)(ci_info->conversation_name[i*2]) << 8) | ((uint16_t)ci_info->conversation_name[(i*2)+1]));
+				payload_d->onion_r1 ^= (((uint16_t)(char_to_hex(ci_info->ri_pool[route_index].relay_id[i]) << 4) | (uint16_t)char_to_hex(ci_info->ri_pool[route_index].relay_id[i+1])) << 8);
+				payload_d->onion_r1 ^= ((uint16_t)(char_to_hex(ci_info->ri_pool[route_index].relay_id[i+2]) << 4) | (uint16_t)char_to_hex(ci_info->ri_pool[route_index].relay_id[i+3]));
+				payload_d->onion_r1 ^= (((uint16_t)(ci_info->conversation_name[i*2]) << 8) | ((uint16_t)ci_info->conversation_name[(i*2)+1]));
 			}
-			payload->order = ci_info->outgoing_msg_counter;
-			payload->client_id = (((uint32_t)g_user_id[0]) << 24) | (((uint32_t)g_user_id[1]) << 16) | (((uint32_t)g_user_id[2]) << 8) | ((uint32_t)g_user_id[3]);
-			payload->conversation_id = (((uint32_t)ci_info->conversation_name[0]) << 24) | (((uint32_t)ci_info->conversation_name[1]) << 16) | 
+			payload_d->order = ci_info->outgoing_msg_counter;
+			payload_d->client_id = (((uint32_t)g_user_id[0]) << 24) | (((uint32_t)g_user_id[1]) << 16) | (((uint32_t)g_user_id[2]) << 8) | ((uint32_t)g_user_id[3]);
+			payload_d->conversation_id = (((uint32_t)ci_info->conversation_name[0]) << 24) | (((uint32_t)ci_info->conversation_name[1]) << 16) | 
 											(((uint32_t)ci_info->conversation_name[2]) << 8) | ((uint32_t)ci_info->conversation_name[3]);
 		break;
 	}
@@ -4054,7 +4055,7 @@ static int generate_incoming_onion_route_payload_from_route_info(conversation_in
 	} else {
 		im_payload_start_byte = payload_start_byte;
 	}
-	or_offset = (return_r_info->route_length - 1) * sizeof(onion_route_data);
+	or_offset = (((return_r_info->route_length - 1) * sizeof(onion_route_data)) + sizeof(onion_route_data));
 	for (i = (return_r_info->route_length - 1); i >= 0; i--) {
 		route_index = return_r_info->relay_route[i];
 		if((route_index < 0) || (route_index >= RELAY_POOL_MAX_SIZE)) {
