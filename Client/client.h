@@ -77,6 +77,7 @@ const char *network_connectivity_test_cmnd 	= "/network";
 const char *exit_cmnd 						= "/exit";
 const char *close_cmnd						= "/close";
 const char *help_cmnd 						= "/help";
+const char *test_rr_cmnd					= "/testrr";
 
 const char *public_cert_dir = ".relay_certs";
 
@@ -86,7 +87,8 @@ typedef enum {
 	DUMMY_PACKET,
 	DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS,
 	DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS_FOR_VERIFICATION,
-	OUTGOING_MESSAGE_PACKET
+	OUTGOING_MESSAGE_PACKET,
+	INCOMING_MESSAGE_PACKET
 } packet_type;
 
 typedef enum {
