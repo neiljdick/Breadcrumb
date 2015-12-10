@@ -66,6 +66,8 @@ char *program_name = "Client";
 #define COMMAND_BUFFER_SIZE 					(128)
 #define USER_INPUT_BUF_LEN 						(128)
 
+#define PROVIDE_MESSAGE_RETURN_ROUTE_PERCENT 	(40)
+
 #define ID_HASH_COUNT 							(3000000)
 
 const char prompt_char 		= '>';
@@ -163,6 +165,7 @@ typedef struct conversation_info
 {
 	int conversation_valid;
 	unsigned char conversation_name[USER_NAME_MAX_LENGTH];
+	unsigned char friend_name[USER_NAME_MAX_LENGTH];
 	int index_of_server_relay;
 	int index_of_entry_relay;
 	int index_of_friend_entry_relay;

@@ -24,6 +24,9 @@ logging_interval g_logging_interval;
 logging_data g_logging_data;
 unsigned int num_relay_packets_bandwidth_report;
 
+payload_data g_message_cache[32];
+int g_message_index = 0;
+
 void init_globals(int argc, char *argv[]);
 void handle_pthread_ret(char *thread_id, int ret);
 void handle_pthread_bytesread(int bytes_read, int clientfd);
@@ -189,6 +192,8 @@ void init_globals(int argc, char *argv[])
 
 	sem_init(&logging_sem, 0, 1);
 	memset(&g_logging_data, 0, sizeof(g_logging_data));
+
+	memset(g_message_cache, 0, sizeof(g_message_cache)); // TODO - remove
 
 	if(argc > 3) {
 		g_logging_interval = (unsigned int)atoi(argv[3]);
@@ -790,11 +795,12 @@ void *handle_msg_client_thread(void *ptr)
 
 int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 {
-	int ret;
+	int i, ret;
 	struct in_addr next_addr;
-	uint16_t next_port;
+	unsigned int next_port;
 	unsigned char packet_data[packet_size_bytes];
 	char onion_r1_ip[RELAY_IP_MAX_LENGTH], onion_r2_ip[RELAY_IP_MAX_LENGTH];
+	unsigned int onion_r1_port, onion_r2_port;
 
 	switch(pd_ptr->type) {
 		case DUMMY_PACKET_NO_RETURN_ROUTE:
@@ -804,7 +810,7 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 		break;
 		case DUMMY_PACKET_W_RETURN_ROUTE:
 			next_addr.s_addr = (((uint64_t)pd_ptr->client_id) << 32) | ((uint64_t)pd_ptr->conversation_id);
-			next_port = pd_ptr->onion_r1;
+			next_port = (unsigned int)pd_ptr->onion_r1;
 			#ifdef ENABLE_LOGGING
 				fprintf(stdout, "%s Received non-route packet, type = %s. Next ip = %s, port = %u\n", thread_id, get_string_for_payload_type(pd_ptr->type), inet_ntoa(next_addr), next_port);
 			#endif
@@ -819,17 +825,60 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 		break;
 		case MESSAGE_PACKET:
 			#ifdef ENABLE_LOGGING
-				fprintf(stdout, "%s Received message packet, onion_r1 = 0x%x, order = 0x%x, client_id = 0x%x, conversation_id = 0x%x. Dropping packet\n", 
+				fprintf(stdout, "%s Received message packet, onion_r1 = 0x%x, order = 0x%x, client_id = 0x%x, conversation_id = 0x%x. Storing packet\n", 
 									thread_id, pd_ptr->onion_r1, pd_ptr->order, pd_ptr->client_id, pd_ptr->conversation_id);
 			#endif
+			memcpy(&(g_message_cache[g_message_index]), pd_ptr, sizeof(payload_data)); // TODO
+			if((++g_message_index) >= 32) {
+				g_message_index = 0;
+			}
 		break;
 		case DUAL_RETURN_ROUTE:
 			#ifdef ENABLE_LOGGING
 				memcpy(onion_r1_ip, pd_ptr->payload, RELAY_IP_MAX_LENGTH);
-				memcpy(onion_r2_ip, pd_ptr->payload + RELAY_IP_MAX_LENGTH, RELAY_IP_MAX_LENGTH);
-				fprintf(stdout, "%s Received return route packet, onion_r1 = 0x%x, onion_r2 = 0x%x, client_id = 0x%x, conversation_id = 0x%x onion_r1_ip = %s, onion_r1_ip = %s. Dropping packet\n", 
-										thread_id, pd_ptr->onion_r1, pd_ptr->onion_r2, pd_ptr->client_id, pd_ptr->conversation_id, onion_r1_ip, onion_r2_ip);
+				memcpy(&onion_r1_port, pd_ptr->payload + RELAY_IP_MAX_LENGTH, sizeof(onion_r1_port));
+				memcpy(onion_r2_ip, pd_ptr->payload + RELAY_IP_MAX_LENGTH + sizeof(onion_r1_port), RELAY_IP_MAX_LENGTH);
+				memcpy(&onion_r2_port, pd_ptr->payload + (RELAY_IP_MAX_LENGTH * 2) + sizeof(onion_r1_port), sizeof(onion_r2_port));
+				fprintf(stdout, "%s Received return route packet, onion_r1 = 0x%x, onion_r2 = 0x%x, client_id = 0x%x, conversation_id = 0x%x ", 
+										thread_id, pd_ptr->onion_r1, pd_ptr->onion_r2, pd_ptr->client_id, pd_ptr->conversation_id);
+
+				fprintf(stdout, "onion_r1_ip = %s, onion_r1_port = %u, onion_r1_ip = %s, onion_r2_port = %u. Searching for matching message packet\n", 
+										onion_r1_ip, onion_r1_port, onion_r2_ip, onion_r2_port);
 			#endif
+			for (i = 0; i < 32; ++i) {
+				if(pd_ptr->onion_r1 == g_message_cache[i].onion_r1) {
+					fprintf(stdout, "Found matching onion, %x\n", pd_ptr->onion_r1);
+					ret = fill_buf_with_random_data(packet_data, packet_size_bytes);
+					if(ret < 0) {
+						return -1;
+					}
+
+					memcpy(packet_data, pd_ptr->payload + sizeof(onion_route_data), sizeof(onion_route_data) * 2);
+					memcpy(packet_data + payload_start_byte, g_message_cache[i].payload, PAYLOAD_SIZE_BYTES);
+
+					send_packet_to_relay(packet_data, onion_r1_ip, onion_r1_port);
+
+					memset(&(g_message_cache[i]), 0, sizeof(payload_data));
+					break;
+				} else if(pd_ptr->onion_r2 == g_message_cache[i].onion_r1) {
+					fprintf(stdout, "Found matching onion, %x\n", pd_ptr->onion_r2);
+					ret = fill_buf_with_random_data(packet_data, packet_size_bytes);
+					if(ret < 0) {
+						return -1;
+					}
+
+					memcpy(packet_data, pd_ptr->payload + (sizeof(onion_route_data) * 4), sizeof(onion_route_data) * 2);
+					memcpy(packet_data + payload_start_byte, g_message_cache[i].payload, PAYLOAD_SIZE_BYTES);
+
+					send_packet_to_relay(packet_data, onion_r2_ip, onion_r2_port);
+
+					memset(&(g_message_cache[i]), 0, sizeof(payload_data));
+					break;
+				}
+			}
+			if(i == 32) {
+				fprintf(stdout, "Failed to find matching message packet\n");
+			}
 		break;
 		default:
 			#ifdef ENABLE_LOGGING

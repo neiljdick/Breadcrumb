@@ -36,8 +36,8 @@ unsigned char g_user_id[USER_NAME_MAX_LENGTH];
 int g_current_conversation_index;
 conversation_info g_conversations[MAX_CONVERSATIONS];
 char g_client_ip_addr[IP_BUF_MAX_LEN];
-int g_message_port;
-int g_close_current_chat;
+int g_message_port, g_close_current_chat;
+int g_just_sent_rr_packet; // TODO
 
 route_history g_rhistory;
 
@@ -93,7 +93,7 @@ static void handle_chat(void);
 static int init_new_conversation_with_name(char *friend_name);
 static int perform_user_id_init(const char *user_id_raw);
 static int init_chat(char *friend_name, conversation_info *ci_out /* out */);
-static int initialize_incoming_routes_to_supply(conversation_info *ci_out);
+static int reset_incoming_routes_to_supply(conversation_info *ci_out);
 static int get_relay_public_certificates_debug(conversation_info *ci_info);
 static int set_entry_relay_for_conversation(conversation_info *ci_info);
 static int set_relay_keys_for_conversation(conversation_info *ci_info);
@@ -217,6 +217,7 @@ static int init_globals(int argc, char const *argv[])
 	g_current_conversation_index = 0;
 	g_queue_dummy_packet_transmission = 0;
 	g_close_current_chat = 0;
+	g_just_sent_rr_packet = 0;
 
 	memset(&g_bandwidth_data, 0, sizeof(bandwidth_data));
 	#ifdef ENABLE_BANDWIDTH_LOGGING
@@ -418,6 +419,7 @@ void *user_input_handler(void *ptr)
 		} 
 		#ifdef TEST_RR_PACKET
 			else if (strncasecmp(buf, test_rr_cmnd, strlen(test_rr_cmnd)) == 0) {
+				g_just_sent_rr_packet = 1;
 				send_incoming_message_return_route_packet(&(g_conversations[g_current_conversation_index]));
 			}
 		#endif
@@ -502,13 +504,14 @@ static int handle_received_packet(char *packet)
 		return -1;
 	}
 
-	#ifdef PRINT_PACKETS 
+	//#ifdef PRINT_PACKETS 
+		int i;
 		fprintf(stdout, "Received payload: ");
 		for(i = 0; i < packet_size_bytes; i++) {
 			fprintf(stdout, "%02x", (unsigned char)packet[i]);
 		}
 		fprintf(stdout, "\n");
-	#endif
+	//#endif
 
 	ret = is_message_packet(packet, &is_message);
 	if(ret < 0) {
@@ -529,7 +532,13 @@ static int is_message_packet(char *packet, int *is_message)
 		return -1;
 	}
 
-	*is_message = 0; // TODO
+	fprintf(stdout, "Here: %u\n", g_just_sent_rr_packet);
+
+	if(g_just_sent_rr_packet) { // TODO
+		*is_message = 1;
+	} else {
+		*is_message = 0;
+	}
 
 	return 0;
 }
@@ -541,6 +550,7 @@ static int handle_message_packet(char *packet)
 	}
 
 	// TODO
+	fprintf(stdout, "%s/> %s", g_conversations[g_current_conversation_index].friend_name, packet + (ONION_ROUTE_DATA_SIZE * 3));
 
 	return 0;
 }
@@ -801,9 +811,12 @@ static int handle_dummy_packet_transmission(void)
 	if(ret < 0) {
 		return -1;
 	}
-	if (num_im_routes_to_supply != 0) {
-		rand_val = get_random_number(0);
-		if(rand_val & 0x01) {
+	if (num_im_routes_to_supply == 0) {
+		// TODO re-initialize num im routes
+		reset_incoming_routes_to_supply(&(g_conversations[g_current_conversation_index]));
+	} else {
+		rand_val = get_random_number(0) % 100;
+		if(rand_val <= PROVIDE_MESSAGE_RETURN_ROUTE_PERCENT) {
 			send_incoming_message_return_route_packet(&(g_conversations[g_current_conversation_index]));
 			return 0;
 		}
@@ -1011,6 +1024,8 @@ static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 	fflush(stdout);
 
 	memset(ci_out, 0, sizeof(conversation_info));
+
+	strncpy((char *)ci_out->friend_name, friend_name, USER_NAME_MAX_LENGTH);
 	get_sha256_hash_of_string("[MAIN THREAD]", ID_HASH_COUNT, (const char *)friend_name, &hashval, &hashval_len);
 	if(hashval_len < (USER_NAME_MAX_LENGTH * 2)) {
 		return -1;
@@ -1086,7 +1101,7 @@ static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 	if(ret < 0) {
 		return -1;
 	}
-	ret = initialize_incoming_routes_to_supply(ci_out);
+	ret = reset_incoming_routes_to_supply(ci_out);
 	if(ret < 0) {
 		return -1;
 	}
@@ -1125,7 +1140,7 @@ static int get_index_of_next_free_conversation(conversation_info *conversations)
 	return -1;
 }
 
-static int initialize_incoming_routes_to_supply(conversation_info *ci_out)
+static int reset_incoming_routes_to_supply(conversation_info *ci_out)
 {
 	int i, current_im_route;
 	route_info r_info_tmp;
@@ -3016,7 +3031,7 @@ static int send_dummy_packet_with_routes_defined(conversation_info *ci_info, rou
 
 static int create_and_add_user_message_to_queue(conversation_info *ci_info, char *msg)
 {
-	int ret;
+	int i, ret;
 	route_info forward_route, im_route;
 	payload_data msg_packet_payload;
 
@@ -3036,6 +3051,12 @@ static int create_and_add_user_message_to_queue(conversation_info *ci_info, char
 		return -1;
 	}
 	memcpy((msg_packet_payload.payload + MESSAGE_OFFSET), msg, (strlen(msg) + 1));
+
+	fprintf(stdout, "User message payload: ");
+	for(i = 0; i < sizeof(payload_data); i++) {
+		fprintf(stdout, "%02x", *(((unsigned char *)&msg_packet_payload) + i));
+	}
+	fprintf(stdout, "\n");
 
 	ret = generate_random_outgoing_message_route(ci_info, &im_route);
 	if(ret < 0) {
@@ -3162,7 +3183,11 @@ static int generate_packet_metadata(conversation_info *ci_info, payload_type p_t
 											(((uint32_t)ci_info->conversation_name[2]) << 8) | ((uint32_t)ci_info->conversation_name[3]);
 
 			memcpy(payload_d->payload, ci_info->ri_pool[return_r_info->relay_route[0]].relay_ip, RELAY_IP_MAX_LENGTH);
-			memcpy(payload_d->payload + RELAY_IP_MAX_LENGTH, ci_info->ri_pool[return_r_info2->relay_route[0]].relay_ip, RELAY_IP_MAX_LENGTH);
+			memcpy((payload_d->payload + RELAY_IP_MAX_LENGTH), &(ci_info->ri_pool[return_r_info->relay_route[0]].relay_port), sizeof(ci_info->ri_pool[return_r_info->relay_route[0]].relay_port));
+			memcpy(payload_d->payload + RELAY_IP_MAX_LENGTH + sizeof(ci_info->ri_pool[return_r_info->relay_route[0]].relay_port), ci_info->ri_pool[return_r_info2->relay_route[0]].relay_ip, RELAY_IP_MAX_LENGTH);
+			memcpy(payload_d->payload + (RELAY_IP_MAX_LENGTH * 2) + sizeof(ci_info->ri_pool[return_r_info->relay_route[0]].relay_port), &(ci_info->ri_pool[return_r_info2->relay_route[0]].relay_port), 
+					sizeof(ci_info->ri_pool[return_r_info->relay_route[0]].relay_port));
+
 		break;
 		case MESSAGE_PACKET:
 			if(return_r_info == NULL) {
