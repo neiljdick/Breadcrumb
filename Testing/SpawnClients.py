@@ -6,14 +6,15 @@ import time
 client_num = 0
 
 waypoint_index = 0
-waypoints =	[	(200, 0.25, 15), 
-				(120, 1.0, 15),
-				(160, 5, 15),
-				(250, 1.67, 15),
-				(300, 0.1, 15),
-				(400, 0.05, 15),
-				(80, 10, 15)
-			]
+waypoints =     [   (200, 0.25, 10),
+                    (100, 0.05, 10),
+                    (220, 1.0, 10),
+                    (160, 5, 10),
+                    (20, 1.67, 10),
+                    (110, 0.1, 10),
+                    (40, 0.05, 10),
+                    (180, 10, 10)
+                ]
 
 port_min = 16384;
 port_max = 65530
@@ -29,10 +30,11 @@ while waypoint_index < len(waypoints):
 
 	while (waypoint_remain_time_min > 0):
 		if(proc_queue.qsize() < num_clients_target):
-			new_client_proc = subprocess.Popen(["/media/veracrypt1/Prototype/Prototype_C/Client/client", ("client_" + str(client_num)), str(port)], shell=False, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+			new_client_proc = subprocess.Popen(["/media/veracrypt1/Prototype/Prototype_C/Client/client", ("client_" + str(client_num)), str(port)], shell=False, stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=1, universal_newlines=True)
 			client_num += 1
 			try:
-			    new_client_proc.communicate(b'CLIENT_INST' + struct.pack("H", proc_queue.qsize()), timeout=0.1)
+				new_client_proc.communicate("/connect CLIENT_INST" + str(proc_queue.qsize()) + "\n", timeout=0.1)
+				new_client_proc.stdin.flush()
 			except Exception:
 				pass
 			
@@ -55,3 +57,6 @@ while waypoint_index < len(waypoints):
 	waypoint_index += 1
 	if(waypoint_index >= len(waypoints)):
 		break
+
+while not proc_queue.empty():
+	proc_queue.get().terminate()

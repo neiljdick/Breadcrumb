@@ -42,7 +42,7 @@ char *program_name = "Client";
 
 #define MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER 	(3)
 
-#define PUBLIC_KEY_CERT_SIZE					(426)
+#define PUBLIC_KEY_CERT_SIZE					(251)
 #define USER_NAME_MIN_LENGTH 					(4)
 #define USER_NAME_MAX_LENGTH 					(32)
 #define RELAY_POOL_MAX_SIZE						(20)

@@ -20,7 +20,7 @@
 #define RELAY_RSA_PUBLIC_KEY_FILE 	("relay_public_rsa_key.pem")
 #define RELAY_RSA_PRIVATE_KEY_FILE 	("relay_private_rsa_key.pem")
 
-#define RSA_KEY_LENGTH 				(2048)
+#define RSA_KEY_LENGTH 				(1024)
 #define RSA_KEY_LENGTH_BYTES		(RSA_KEY_LENGTH/8)
 #define RSA_EXPONENT 				(65537)
 

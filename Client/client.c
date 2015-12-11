@@ -1,11 +1,11 @@
 #include "client.h"
 
 //#define LOG_TO_FILE_INSTEAD_OF_STDOUT
-//#define ENABLE_LOGGING
+#define ENABLE_LOGGING
 //#define ENABLE_TRANSMIT_RECEIVE_LOGGING
 //#define ENABLE_KEY_HISTORY_LOGGING
 //#define ENABLE_BANDWIDTH_LOGGING
-//#define ENABLE_TOTAL_UID_LOGGING
+#define ENABLE_TOTAL_UID_LOGGING
 //#define ENABLE_UID_HISTORY_LOGGING
 //#define ENABLE_USER_INPUT_THREAD_LOGGING
 #define DEBUG_MODE
@@ -37,6 +37,7 @@ int g_current_conversation_index;
 conversation_info g_conversations[MAX_CONVERSATIONS];
 char g_client_ip_addr[IP_BUF_MAX_LEN];
 int g_message_port, g_close_current_chat;
+int g_enable_send_packet_handler;
 int g_just_sent_rr_packet; // TODO
 
 route_history g_rhistory;
@@ -217,6 +218,7 @@ static int init_globals(int argc, char const *argv[])
 	g_current_conversation_index = 0;
 	g_queue_dummy_packet_transmission = 0;
 	g_close_current_chat = 0;
+	g_enable_send_packet_handler = 0;
 	g_just_sent_rr_packet = 0;
 
 	memset(&g_bandwidth_data, 0, sizeof(bandwidth_data));
@@ -290,10 +292,6 @@ static int init_self_ip(char *thread_id)
 		#endif
 	#endif	
 
-	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "%s Found my ip address: %s\n", thread_id, g_client_ip_addr);
-	#endif
-
 	return 0;
 }
 
@@ -309,6 +307,7 @@ static void handle_chat(void)
 		fprintf(stdout, "\r%c ", prompt_char);
 		fgets(cmnd_buf, sizeof(cmnd_buf), stdin);
 		if (strncasecmp(cmnd_buf, connect_to_chat_cmnd, strlen(connect_to_chat_cmnd)) == 0) {
+			g_enable_send_packet_handler = 1;
 			for (i = 0; i < COMMAND_BUFFER_SIZE; ++i) {
 				if(cmnd_buf[i] == '\n') {
 					cmnd_buf[i] = '\0';
@@ -318,18 +317,20 @@ static void handle_chat(void)
 			if(ret < 0) {
 				continue;
 			}
-			ret = init_handle_user_input_thread(&user_input_thread);
+			/*ret = init_handle_user_input_thread(&user_input_thread);
 			if(ret < 0) {
 				continue;
-			}
+			}*/
 			while(1) {
 				usleep(MIN_PACKET_TRANSMISSION_DELAY_US);
 				usleep(get_random_number(0) % MIN_PACKET_TRANSMISSION_DELAY_US);
+				//fprintf(stdout, "g_queue_dummy_packet_transmission: %d\n", g_queue_dummy_packet_transmission);
 				if(g_queue_dummy_packet_transmission) {
-					//handle_dummy_packet_transmission(); TODO - Remove
+					handle_dummy_packet_transmission();
 					g_queue_dummy_packet_transmission = 0;
 				}
 				if(g_close_current_chat) {
+					g_enable_send_packet_handler = 0;
 					fprintf(stdout, "%s Closing conversation.\n", feedback_tag);
 					break;
 				}
@@ -409,7 +410,7 @@ void *user_input_handler(void *ptr)
 		usleep(200000);
 
 		fprintf(stdout, "%s ", my_chat_tag);
-
+		memset(buf, 0, USER_INPUT_BUF_LEN);
 		fgets(buf, sizeof(buf), stdin);
 		if (strncasecmp(buf, close_cmnd, strlen(close_cmnd)) == 0) {
 			g_close_current_chat = 1;
@@ -652,8 +653,12 @@ void *send_packet_handler(void *ptr)
 	should_send_packet = 0;
 	did_send_packet = 0;
 	while(1) {
-		handle_constant_bandwidth(did_send_packet, &should_send_packet);
-		handle_packet_transmission(should_send_packet, &did_send_packet);	
+		if(g_enable_send_packet_handler) {
+			handle_constant_bandwidth(did_send_packet, &should_send_packet);
+			handle_packet_transmission(should_send_packet, &did_send_packet);
+		} else {
+			sleep(1);
+		}
 	}
 }
 
@@ -689,6 +694,7 @@ static int handle_constant_bandwidth(int did_send_packet, int *should_send_packe
 				*should_send_packet = 0;
 			}
 		}
+		//fprintf(stdout, "current_average_bandwidth: %f\n", current_average_bandwidth);
 	}
 	ret = gettimeofday(&prev_time, NULL);
 	if(ret < 0) {
@@ -748,6 +754,9 @@ static int handle_packet_transmission(int should_send_packet, int *did_send_pack
 		g_queue_dummy_packet_transmission = 1;
 		*did_send_packet = 0;
 
+		//fprintf(stdout, "[MAIN THREAD] NOT Transmitting packet\n");
+		//fflush(stdout);
+
 		#ifdef ENABLE_BANDWIDTH_LOGGING
 			FILE *fp;
 			fp = fopen(bandwidth_log_name, "a+");
@@ -806,7 +815,7 @@ static int handle_dummy_packet_transmission(void)
 		return 0;
 	}
 
-	ret = get_num_of_incoming_message_routes_to_supply(&(g_conversations[g_current_conversation_index]), &num_im_routes_to_supply);
+	/*ret = get_num_of_incoming_message_routes_to_supply(&(g_conversations[g_current_conversation_index]), &num_im_routes_to_supply);
 	if(ret < 0) {
 		return -1;
 	}
@@ -818,7 +827,7 @@ static int handle_dummy_packet_transmission(void)
 			send_incoming_message_return_route_packet(&(g_conversations[g_current_conversation_index]));
 			return 0;
 		}
-	}
+	}*/
 
 	perform_relay_verification = 0;
 	rand_val = get_random_number(0) % (DO_NODE_CONNECTION_CHECK + 1);
@@ -848,6 +857,7 @@ static int handle_dummy_packet_transmission(void)
 		case SEND_DUMMY_PACKET_NO_RR_AND_W_RR:
 			send_dummy_packet_no_return_route(&(g_conversations[g_current_conversation_index]));
 			wait_for_send_queue_empty("[MAIN THREAD]");
+			// TODO - wait for should send packet!
 			initialize_should_receive_dummy_packet_command();
 			send_dummy_packet_with_return_route(&(g_conversations[g_current_conversation_index]));
 			ret = wait_for_command_completion(MAX_VERIFY_ROUTE_TIME_SEC, &dummy_packet_received);
@@ -1049,10 +1059,10 @@ static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 	#else
 		
 		#ifdef FIRST_CLIENT
-			ci_out->index_of_entry_relay = 0;
+			//ci_out->index_of_entry_relay = 0; TODO
 			ci_out->index_of_friend_entry_relay = 1;
 		#else
-			ci_out->index_of_entry_relay = 1;
+			//ci_out->index_of_entry_relay = 1; TODO
 			ci_out->index_of_friend_entry_relay = 0;
 		#endif	
 		ci_out->index_of_server_relay = 3;
@@ -1091,6 +1101,10 @@ static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 	 */ 
 	//check_validity_of_conversation(&convo_valid);
 
+	ret = set_entry_relay_for_conversation(ci_out); // TODO - remove 
+	if(ret < 0) {
+		return -1;
+	}
 	ret = set_relay_keys_for_conversation(ci_out);
 	if(ret < 0) {
 		return -1;
@@ -2558,6 +2572,7 @@ static int verify_all_relays_online_rapid(char *thread_id, conversation_info *ci
 		} else {
 			fprintf(stdout, "%s Rapidly verification of all relays failed\n", thread_id);
 		}
+		fflush(stdout);
 	#endif
 
 	return 0;
@@ -2881,6 +2896,7 @@ static int verify_relay_online(char *thread_id, conversation_info *ci_info, int 
 		} else {
 			fprintf(stdout, "%s Found relay (index = %d, ip = %s) is offline, using verification type = %s\n", thread_id, relay_index, ci_info->ri_pool[relay_index].relay_ip, get_verification_type_str(v_type));
 		}
+		fflush(stdout);
 	#endif
 
 	return 0;
@@ -2906,6 +2922,7 @@ static int send_dummy_packet_no_return_route(conversation_info *ci_info)
 		for (i = 0; i < r_info.route_length; i++) {
 			fprintf(stdout, "[MAIN THREAD] Route %u, index = %u, ip = %s\n", (i + 1), r_info.relay_route[i], ci_info->ri_pool[r_info.relay_route[i]].relay_ip);	
 		}
+		fflush(stdout);
 	#endif
 
 	commit_key_info_to_history(ci_info);
@@ -2948,6 +2965,7 @@ static int send_dummy_packet_with_return_route(conversation_info *ci_info)
 		for (i = 0; i < r_info.route_length; i++) {
 			fprintf(stdout, "[MAIN THREAD] Route %u, index = %u, ip = %s\n", (i + 1), r_info.relay_route[i], ci_info->ri_pool[r_info.relay_route[i]].relay_ip);	
 		}
+		fflush(stdout);
 	#endif
 
 	ret = generate_random_return_route(ci_info, &r_info, &return_r_info);
@@ -2960,6 +2978,7 @@ static int send_dummy_packet_with_return_route(conversation_info *ci_info)
 			fprintf(stdout, "[MAIN THREAD] Return route %u, index = %u, ip = %s\n", (i + 1), return_r_info.relay_route[i], ci_info->ri_pool[return_r_info.relay_route[i]].relay_ip);
 		}
 		fprintf(stdout, "[MAIN THREAD] Return route %u, index = none, ip = %s\n", (i + 1), g_client_ip_addr);
+		fflush(stdout);
 	#endif
 
 	commit_key_info_to_history(ci_info);
@@ -3252,6 +3271,10 @@ static int create_packet(packet_type type, conversation_info *ci_info, route_inf
 	if(ret < 0) {
 		return -1;
 	}
+	ret = fill_buf_with_random_data((unsigned char *)&ic_data, sizeof(id_cache_data));
+	if(ret < 0) {
+		return -1;
+	}
 
 	switch(type) {
 		case REGISTER_UIDS_WITH_ENTRY_RELAY:
@@ -3274,10 +3297,10 @@ static int create_packet(packet_type type, conversation_info *ci_info, route_inf
 			memcpy(ic_data.outgoing_msg_aes_key, ci_info->ri_pool[ci_info->index_of_entry_relay].current_msg_key_info.outgoing_msg_aes_key, AES_KEY_SIZE_BYTES);
 			ic_data.outgoing_msg_relay_user_id = ci_info->ri_pool[ci_info->index_of_entry_relay].current_msg_key_info.outgoing_msg_relay_user_id;
 			
-			ret = RSA_public_encrypt(sizeof(id_cache_data), (unsigned char *)&ic_data, (packet + payload_start_byte), ci_info->ri_pool[ci_info->index_of_entry_relay].public_cert, RSA_PKCS1_OAEP_PADDING);
+			ret = RSA_public_encrypt(sizeof(id_cache_data), (unsigned char *)&ic_data, (packet + payload_start_byte), ci_info->ri_pool[ci_info->index_of_entry_relay].public_cert, RSA_NO_PADDING);
 			if(ret != RSA_KEY_LENGTH_BYTES) {
 				#ifdef ENABLE_LOGGING
-					fprintf(stdout, "[MAIN THREAD] Failed to encrypt id cache data\n");
+					fprintf(stdout, "[MAIN THREAD] Failed to encrypt id cache data, ret=%d\n", ret);
 				#endif
 
 				return -1;
@@ -3346,10 +3369,10 @@ static int create_packet(packet_type type, conversation_info *ci_info, route_inf
 			ic_data.outgoing_msg_relay_user_id = ci_info->ri_pool[relay_register_index].current_msg_key_info.outgoing_msg_relay_user_id;
 			
 			ret = RSA_public_encrypt(sizeof(id_cache_data), (unsigned char *)&ic_data, (encrypt_buffer + (sizeof(onion_route_data))), 
-										ci_info->ri_pool[relay_register_index].public_cert, RSA_PKCS1_OAEP_PADDING);
+										ci_info->ri_pool[relay_register_index].public_cert, RSA_NO_PADDING);
 			if(ret != RSA_KEY_LENGTH_BYTES) {
 				#ifdef ENABLE_LOGGING
-					fprintf(stdout, "[MAIN THREAD] Failed to encrypt id cache data\n");
+					fprintf(stdout, "[MAIN THREAD] Failed to encrypt id cache data, ret=%d\n", ret);
 				#endif
 
 				return -1;

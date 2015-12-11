@@ -59,6 +59,7 @@ typedef struct id_cache_data
 	uint32_t incoming_msg_relay_user_id;
 	uint8_t outgoing_msg_aes_key[AES_KEY_SIZE_BYTES];
 	uint32_t outgoing_msg_relay_user_id;
+	uint64_t padding_rsa_1024;
 } id_cache_data;
 
 typedef struct payload_data

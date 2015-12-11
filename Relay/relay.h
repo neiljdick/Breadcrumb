@@ -89,6 +89,7 @@ typedef struct thread_pool
 typedef enum 
 {
 	PER_SECOND				= 0,
+	PER_FIFTEEN_SECONDS,
 	PER_MINUTE,
 	PER_FIVE_MINUTES,
 	PER_TEN_MINUTES,

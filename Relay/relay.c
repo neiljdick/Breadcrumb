@@ -1,7 +1,7 @@
 #include "relay.h"
 
 //#define LOG_TO_FILE_INSTEAD_OF_STDOUT
-#define ENABLE_LOGGING
+//#define ENABLE_LOGGING
 #define DEBUG_MODE
 //#define ENABLE_THREAD_LOGGING
 //#define PRINT_PACKETS
@@ -653,7 +653,7 @@ void *handle_msg_client_thread(void *ptr)
 			close(client_socket);
 			sem_wait(&logging_sem);
 			g_logging_data.num_key_get_failures[g_logging_data.logging_index]++;
-			fprintf(stdout, "KF_OD_I: %u\n", or_data_ptr->uid);
+			fprintf(stderr, "KF_OD_I: %u\n", or_data_ptr->uid);
 			sem_post(&logging_sem);
 			handle_pthread_ret(thread_id_buf, -5);
 		} 
@@ -680,7 +680,7 @@ void *handle_msg_client_thread(void *ptr)
 		close(client_socket);
 		sem_wait(&logging_sem);
 		g_logging_data.num_key_get_failures[g_logging_data.logging_index]++;
-		fprintf(stdout, "KF_OD: %u\n", or_data_ptr->uid);
+		fprintf(stderr, "KF_OD: %u\n", or_data_ptr->uid);
 		sem_post(&logging_sem);
 		handle_pthread_ret(thread_id_buf, -5);
 	}
@@ -706,7 +706,7 @@ void *handle_msg_client_thread(void *ptr)
 			close(client_socket);
 			sem_wait(&logging_sem);
 			g_logging_data.num_key_get_failures[g_logging_data.logging_index]++;
-			fprintf(stdout, "KF_PD_I: %u\n", or_payload_data_ptr->uid);
+			fprintf(stderr, "KF_PD_I: %u\n", or_payload_data_ptr->uid);
 			sem_post(&logging_sem);
 			handle_pthread_ret(thread_id_buf, -5);
 		} 
@@ -732,7 +732,7 @@ void *handle_msg_client_thread(void *ptr)
 		close(client_socket);
 		sem_wait(&logging_sem);
 		g_logging_data.num_key_get_failures[g_logging_data.logging_index]++;
-		fprintf(stdout, "KF_PD: %u\n", or_payload_data_ptr->uid);
+		fprintf(stderr, "KF_PD: %u\n", or_payload_data_ptr->uid);
 		sem_post(&logging_sem);
 		handle_pthread_ret(thread_id_buf, -5);
 	}
@@ -766,9 +766,9 @@ void *handle_msg_client_thread(void *ptr)
 		sem_wait(&logging_sem);
 		g_logging_data.num_non_relay_packets[g_logging_data.logging_index]++;
 		g_logging_data.total_num_of_relay_threads_destroyed[g_logging_data.logging_index]++;
+		num_relay_packets_bandwidth_report += 1;
 		sem_post(&logging_sem);
 
-		num_relay_packets_bandwidth_report += 1;
 	} else {
 		next_addr.s_addr = or_data_decrypted_ptr->ord_enc.next_pkg_ip;
 		#ifdef ENABLE_LOGGING
@@ -780,9 +780,8 @@ void *handle_msg_client_thread(void *ptr)
 		sem_wait(&logging_sem);
 		g_logging_data.num_relay_packets[g_logging_data.logging_index]++;
 		g_logging_data.total_num_of_relay_threads_destroyed[g_logging_data.logging_index]++;
-		sem_post(&logging_sem);
-
 		num_relay_packets_bandwidth_report += 2;
+		sem_post(&logging_sem);
 	}
 
 	#ifdef ENABLE_THREAD_LOGGING
@@ -824,6 +823,7 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 			send_packet_to_relay(packet_data, inet_ntoa(next_addr), next_port);
 		break;
 		case MESSAGE_PACKET:
+			return 0; // TODO
 			#ifdef ENABLE_LOGGING
 				fprintf(stdout, "%s Received message packet, onion_r1 = 0x%x, order = 0x%x, client_id = 0x%x, conversation_id = 0x%x. Storing packet\n", 
 									thread_id, pd_ptr->onion_r1, pd_ptr->order, pd_ptr->client_id, pd_ptr->conversation_id);
@@ -834,6 +834,7 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 			}
 		break;
 		case DUAL_RETURN_ROUTE:
+			return 0; // TODO
 			#ifdef ENABLE_LOGGING
 				memcpy(onion_r1_ip, pd_ptr->payload, RELAY_IP_MAX_LENGTH);
 				memcpy(&onion_r1_port, pd_ptr->payload + RELAY_IP_MAX_LENGTH, sizeof(onion_r1_port));
@@ -931,7 +932,7 @@ void *handle_id_cache_thread(void *ptr)
 		fprintf(stdout, "\n\n ------------------------------------------------------------ \n");
 	#endif
 	
-	RSA_private_decrypt(RSA_KEY_LENGTH_BYTES, (packet_data_encrypted + payload_start_byte), packet_data, rsa, RSA_PKCS1_OAEP_PADDING);
+	RSA_private_decrypt(RSA_KEY_LENGTH_BYTES, (packet_data_encrypted + payload_start_byte), packet_data, rsa, RSA_NO_PADDING);
 	id_data = ((id_cache_data *)packet_data);
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "%s Received id cache data\n", buf);
@@ -1148,6 +1149,12 @@ void handle_logging(void)
 		case PER_SECOND:
 			interval_count = 0;
 			perform_logging_shift = 1;
+		break;
+		case PER_FIFTEEN_SECONDS:
+			if((interval_count % 15) == 0) {
+				interval_count = 0;
+				perform_logging_shift = 1;
+			}
 		break;
 		case PER_MINUTE:
 			if((interval_count % 60) == 0) {
