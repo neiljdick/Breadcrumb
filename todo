@@ -9,6 +9,8 @@
 - [ ] SPIDER
 	- [ ] Keep track of which relays are online
 - [ ] MESSAGE FUNCTIONALITY
+	- [ ] Send and match return routes with messages
+	- [ ] Review if should be adding 'payload_start_byte' to encrypt buffer in some cases
 - [ ] PEER DISCOVERY
 	- [ ] Directory of relays
 	- [ ] Can query relay for other relays

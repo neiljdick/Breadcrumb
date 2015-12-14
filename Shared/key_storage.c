@@ -1,6 +1,6 @@
 #include "key_storage.h"
 
-//#define ENABLE_LOGGING
+#define ENABLE_LOGGING
 //#define ENABLE_INCREMENT_TASK_LOGGING
 //#define LOG_TO_FILE_INSTEAD_OF_STDOUT
 //#define DEBUG_MODE

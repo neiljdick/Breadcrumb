@@ -10,6 +10,7 @@
 #include <openssl/rand.h>
 #include <openssl/rsa.h>
 #include <openssl/pem.h>
+#include <openssl/err.h>
 #include <time.h>
 #include <sys/time.h>
 

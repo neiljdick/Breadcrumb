@@ -18,6 +18,7 @@
 #include <openssl/rand.h>
 #include <openssl/rsa.h>
 #include <openssl/pem.h>
+#include <openssl/err.h>
 #include <signal.h>
 
 #include "../Shared/key_storage.h"
@@ -152,6 +153,7 @@ typedef struct relay_info
 	id_key_info key_info_history[PATH_HISTORY_LENGTH];
 	msg_key_info current_msg_key_info;
 	msg_key_info msg_key_info_history[PATH_HISTORY_LENGTH];
+	unsigned char im_fingerprint[IM_FINGERPRINT_LENGTH];
 	int kih_index;
 	RSA *public_cert;
 } relay_info;

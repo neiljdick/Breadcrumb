@@ -6,7 +6,7 @@ import time
 client_num = 0
 
 waypoint_index = 0
-waypoints =     [   (200, 0.25, 10),
+waypoints =     [   (40, 0.25, 10),
                     (100, 0.05, 10),
                     (220, 1.0, 10),
                     (160, 5, 10),

@@ -8,6 +8,7 @@ int init_cryptography_env()
 {
 	if(added_all_algorithms == 0) {
 		OpenSSL_add_all_algorithms();
+		ERR_load_crypto_strings();
 		added_all_algorithms = 1;
 	}
 

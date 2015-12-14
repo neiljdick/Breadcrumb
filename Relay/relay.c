@@ -1,7 +1,7 @@
 #include "relay.h"
 
 //#define LOG_TO_FILE_INSTEAD_OF_STDOUT
-//#define ENABLE_LOGGING
+#define ENABLE_LOGGING
 #define DEBUG_MODE
 //#define ENABLE_THREAD_LOGGING
 //#define PRINT_PACKETS
@@ -798,8 +798,8 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 	struct in_addr next_addr;
 	unsigned int next_port;
 	unsigned char packet_data[packet_size_bytes];
-	char onion_r1_ip[RELAY_IP_MAX_LENGTH], onion_r2_ip[RELAY_IP_MAX_LENGTH];
-	unsigned int onion_r1_port, onion_r2_port;
+	return_route_ip_data *rr1_ip_data, *rr2_ip_data;
+	struct in_addr rr1_ip_addr, rr2_ip_addr;
 
 	switch(pd_ptr->type) {
 		case DUMMY_PACKET_NO_RETURN_ROUTE:
@@ -823,7 +823,6 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 			send_packet_to_relay(packet_data, inet_ntoa(next_addr), next_port);
 		break;
 		case MESSAGE_PACKET:
-			return 0; // TODO
 			#ifdef ENABLE_LOGGING
 				fprintf(stdout, "%s Received message packet, onion_r1 = 0x%x, order = 0x%x, client_id = 0x%x, conversation_id = 0x%x. Storing packet\n", 
 									thread_id, pd_ptr->onion_r1, pd_ptr->order, pd_ptr->client_id, pd_ptr->conversation_id);
@@ -834,44 +833,43 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 			}
 		break;
 		case DUAL_RETURN_ROUTE:
-			return 0; // TODO
 			#ifdef ENABLE_LOGGING
-				memcpy(onion_r1_ip, pd_ptr->payload, RELAY_IP_MAX_LENGTH);
-				memcpy(&onion_r1_port, pd_ptr->payload + RELAY_IP_MAX_LENGTH, sizeof(onion_r1_port));
-				memcpy(onion_r2_ip, pd_ptr->payload + RELAY_IP_MAX_LENGTH + sizeof(onion_r1_port), RELAY_IP_MAX_LENGTH);
-				memcpy(&onion_r2_port, pd_ptr->payload + (RELAY_IP_MAX_LENGTH * 2) + sizeof(onion_r1_port), sizeof(onion_r2_port));
-				fprintf(stdout, "%s Received return route packet, onion_r1 = 0x%x, onion_r2 = 0x%x, client_id = 0x%x, conversation_id = 0x%x ", 
-										thread_id, pd_ptr->onion_r1, pd_ptr->onion_r2, pd_ptr->client_id, pd_ptr->conversation_id);
+				rr1_ip_data = (return_route_ip_data *)pd_ptr->payload;
+				rr2_ip_data = (return_route_ip_data *)(pd_ptr->payload + payload_start_byte);
+				rr1_ip_addr.s_addr = rr1_ip_data->onion_return_ip;
+				rr2_ip_addr.s_addr = rr2_ip_data->onion_return_ip;
 
+				fprintf(stdout, "%s Received return route packet, onion_r1 = 0x%x, onion_r2 = 0x%x, client_id = 0x%x, conversation_id = 0x%x ", 
+									thread_id, pd_ptr->onion_r1, pd_ptr->onion_r2, pd_ptr->client_id, pd_ptr->conversation_id);
 				fprintf(stdout, "onion_r1_ip = %s, onion_r1_port = %u, onion_r1_ip = %s, onion_r2_port = %u. Searching for matching message packet\n", 
-										onion_r1_ip, onion_r1_port, onion_r2_ip, onion_r2_port);
+										inet_ntoa(rr1_ip_addr), rr1_ip_data->onion_return_port, inet_ntoa(rr2_ip_addr), rr2_ip_data->onion_return_port);
 			#endif
 			for (i = 0; i < 32; ++i) {
 				if(pd_ptr->onion_r1 == g_message_cache[i].onion_r1) {
 					fprintf(stdout, "Found matching onion, %x\n", pd_ptr->onion_r1);
+
 					ret = fill_buf_with_random_data(packet_data, packet_size_bytes);
 					if(ret < 0) {
 						return -1;
 					}
-
-					memcpy(packet_data, pd_ptr->payload + sizeof(onion_route_data), sizeof(onion_route_data) * 2);
+					memcpy(packet_data, pd_ptr->payload + sizeof(return_route_ip_data), ((sizeof(onion_route_data) * 3) - sizeof(return_route_ip_data)));
 					memcpy(packet_data + payload_start_byte, g_message_cache[i].payload, PAYLOAD_SIZE_BYTES);
 
-					send_packet_to_relay(packet_data, onion_r1_ip, onion_r1_port);
+					send_packet_to_relay(packet_data, inet_ntoa(rr1_ip_addr), rr1_ip_data->onion_return_port);
 
 					memset(&(g_message_cache[i]), 0, sizeof(payload_data));
 					break;
 				} else if(pd_ptr->onion_r2 == g_message_cache[i].onion_r1) {
 					fprintf(stdout, "Found matching onion, %x\n", pd_ptr->onion_r2);
+
 					ret = fill_buf_with_random_data(packet_data, packet_size_bytes);
 					if(ret < 0) {
 						return -1;
 					}
-
-					memcpy(packet_data, pd_ptr->payload + (sizeof(onion_route_data) * 4), sizeof(onion_route_data) * 2);
+					memcpy(packet_data, pd_ptr->payload + (sizeof(onion_route_data) * 3) + sizeof(return_route_ip_data), ((sizeof(onion_route_data) * 3) - sizeof(return_route_ip_data)));
 					memcpy(packet_data + payload_start_byte, g_message_cache[i].payload, PAYLOAD_SIZE_BYTES);
 
-					send_packet_to_relay(packet_data, onion_r2_ip, onion_r2_port);
+					send_packet_to_relay(packet_data, inet_ntoa(rr2_ip_addr), rr2_ip_data->onion_return_port);
 
 					memset(&(g_message_cache[i]), 0, sizeof(payload_data));
 					break;
