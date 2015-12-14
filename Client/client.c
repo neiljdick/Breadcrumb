@@ -34,6 +34,9 @@ int g_performing_relay_verification_and_reconnection = 0;
 sem_t th_comm_sem;
 thread_comm g_th_comm;
 
+sem_t im_comm_sem;
+incoming_message_comm im_message_comm;
+
 unsigned char g_user_id[USER_NAME_MAX_LENGTH];
 int g_current_conversation_index;
 conversation_info g_conversations[MAX_CONVERSATIONS];
@@ -52,7 +55,7 @@ void *user_input_handler(void *);
 static int init_globals(int argc, char const *argv[]);
 static int handle_received_packet(char *packet);
 static int is_message_packet(char *packet, int *is_message, int *rr_index);
-static int handle_message_packet(char *packet);
+static int handle_message_packet(char *packet, int rr_index);
 static int handle_command_packet(char *packet);
 static void print_ret_code(char *thread_id, int ret);
 static void handle_pthread_ret(char *thread_id, int ret, int clientfd);
@@ -92,6 +95,7 @@ static char* get_verification_type_str(verification_type v_type);
 static int place_packet_on_send_queue(unsigned char *packet, char *destination_ip, int destination_port);
 static int get_number_of_packets_in_send_queue(int *num_packets);
 static void handle_chat(void);
+static int handle_chat_commands(void);
 static int init_new_conversation_with_name(char *friend_name);
 static int perform_user_id_init(const char *user_id_raw);
 static int init_chat(char *friend_name, conversation_info *ci_out /* out */);
@@ -129,6 +133,7 @@ static int generate_onion_route_payload_from_route_info_verify_using_rr_pairs(co
 static int generate_packet_metadata(conversation_info *ci_info, payload_type p_type, route_info *return_r_info, route_info *return_r_info2, payload_data *payload_d);
 static int generate_incoming_message_onion_routes_from_routes_to_supply(conversation_info *ci_info, route_info *im_route_supplied1, route_info *im_route_supplied2, unsigned char *packet);
 static int generate_incoming_onion_route_payload_from_route_info(conversation_info *ci_info, route_info *return_r_info, int is_onion_r1, unsigned char *packet);
+static int update_im_uid_for_relay_index(conversation_info *ci_info, int im_relay_index);
 static int send_packet(packet_type type, conversation_info *ci_info, route_info *r_info, payload_data *payload, void *other);
 static int handle_constant_bandwidth(int did_send_packet, int *should_send_packet);
 static int get_current_average_bandwidth(float *current_bandwidth);
@@ -189,8 +194,11 @@ static int init_globals(int argc, char const *argv[])
 
 	sem_init(&th_comm_sem, 0, 1);
 	sem_init(&g_sp_node_sem, 0, 1);
+	sem_init(&im_comm_sem, 0, 1);
+
 	g_sp_node = NULL;
 	g_current_conversation_index = 0;
+	memset(&im_message_comm, 0, sizeof(im_message_comm));
 
 	if(strlen(argv[1]) > USER_NAME_MAX_LENGTH) {
 		fprintf(stdout, "%s Username must be less than %u characters\n", feedback_tag, USER_NAME_MAX_LENGTH);
@@ -329,11 +337,7 @@ static void handle_chat(void)
 			while(1) {
 				usleep(MIN_PACKET_TRANSMISSION_DELAY_US);
 				usleep(get_random_number(0) % MIN_PACKET_TRANSMISSION_DELAY_US);
-				if(g_queue_packet_for_transmission) {
-					//handle_dummy_packet_transmission(); TODO
-					//handle_chat_command();
-					g_queue_packet_for_transmission = 0;
-				}
+				handle_chat_commands();
 				if(g_close_current_chat) {
 					g_enable_send_packet_handler = 0;
 					fprintf(stdout, "%s Closing conversation.\n", feedback_tag);
@@ -358,6 +362,29 @@ static void handle_chat(void)
 			fprintf(stdout, "\nType /help for list of commands\n");
 		}	
 	}
+}
+
+static int handle_chat_commands(void) 
+{
+	sem_wait(&im_comm_sem);
+	if(im_message_comm.curr_command == HANDLE_NEW_IM_MESSAGE) {
+		fprintf(stdout, "%c[2K", 27);
+		fprintf(stdout, "\r%s/> %s", g_conversations[g_current_conversation_index].friend_name, im_message_comm.curr_message);
+		fprintf(stdout, "%s ", my_chat_tag);
+		fflush(stdout);
+		im_message_comm.message_displayed = 1;
+
+		update_im_uid_for_relay_index(&g_conversations[g_current_conversation_index], im_message_comm.im_relay_index);
+		im_message_comm.curr_command = IM_NO_COMMAND;
+	}
+	sem_post(&im_comm_sem);
+
+	if(g_queue_packet_for_transmission) {
+		//handle_dummy_packet_transmission();
+		g_queue_packet_for_transmission = 0;
+	}
+
+	return 0;
 }
 
 static int init_new_conversation_with_name(char *friend_name)
@@ -426,6 +453,7 @@ void *user_input_handler(void *ptr)
 		#ifdef TEST_RR_PACKET
 			else if (strncasecmp(buf, test_rr_cmnd, strlen(test_rr_cmnd)) == 0) {
 				send_incoming_message_return_route_packet(&(g_conversations[g_current_conversation_index]));
+				reset_incoming_routes_to_supply(&(g_conversations[g_current_conversation_index]));
 			}
 		#endif
 		else {
@@ -523,7 +551,7 @@ static int handle_received_packet(char *packet)
 		return -1;
 	}
 	if(is_message) {
-		handle_message_packet(packet);
+		handle_message_packet(packet, rr_index);
 	} else {
 		handle_command_packet(packet);
 	}
@@ -558,14 +586,28 @@ static int is_message_packet(char *packet, int *is_message, int *rr_index)
 	return 0;
 }
 
-static int handle_message_packet(char *packet)
+static int handle_message_packet(char *packet, int rr_index)
 {
 	if(packet == NULL) {
 		return -1;
 	}
 
-	fprintf(stdout, "%s/> %s", g_conversations[g_current_conversation_index].friend_name, packet + (ONION_ROUTE_DATA_SIZE * 3));
-	fflush(stdout);
+	while(1) {
+		sem_wait(&im_comm_sem);
+		if(im_message_comm.curr_command == IM_NO_COMMAND) {
+			break;
+		} else {
+			sem_post(&im_comm_sem);
+			usleep(200000);
+		}
+	}
+
+	im_message_comm.curr_command = HANDLE_NEW_IM_MESSAGE;
+	im_message_comm.message_displayed = 0;
+	im_message_comm.im_relay_index = rr_index;
+	memcpy(im_message_comm.curr_message, packet + (ONION_ROUTE_DATA_SIZE * 3), MAX_MESSAGE_SIZE);
+
+	sem_post(&im_comm_sem);
 
 	return 0;
 }
@@ -1195,16 +1237,16 @@ static int reset_incoming_routes_to_supply(conversation_info *ci_out)
 		current_im_route++;
 	}	
 
-	#ifdef ENABLE_LOGGING
+	/*#ifdef ENABLE_LOGGING
 	int j;
 	for (i = 0; i < current_im_route; ++i) {
-		fprintf(stdout, "Incoming route (%d): ", i);	
+		fprintf(stdout, "Suppling incoming route (%d): ", i);	
 		for (j = 0; j < MIN_ROUTE_LENGTH; ++j) {
 			fprintf(stdout, "%u ", ci_out->incoming_message_routes_to_supply[i].relay_route[j]);
 		}
 		fprintf(stdout, "\n");
 	}
-	#endif
+	#endif*/
 
 	return 0;
 }
@@ -1405,7 +1447,7 @@ static int reset_relay(char *thread_id, relay_info* r_info)
 	memset(&(r_info->current_key_info), 0, sizeof(r_info->current_key_info));
 	memset(&(r_info->key_info_history), 0, sizeof(r_info->key_info_history));
 	memset(&(r_info->current_msg_key_info), 0, sizeof(r_info->current_msg_key_info));
-	memset(&(r_info->msg_key_info_history), 0, sizeof(r_info->msg_key_info_history));
+	memset(&(r_info->current_msg_key_info_cached), 0, sizeof(r_info->current_msg_key_info_cached));
 	r_info->kih_index = 0;
 
 	ret = generate_AES_key(r_info->current_key_info.aes_key, AES_KEY_SIZE_BYTES);
@@ -4163,10 +4205,15 @@ static int generate_incoming_onion_route_payload_from_route_info(conversation_in
 		if(ret < 0) {
 			return -1;
 		}
-		//ci_info->ri_pool[route_index].current_msg_key_info.incoming_msg_relay_user_id = or_data[i].ord_enc.new_uid;
-		//memcpy(ci_info->ri_pool[route_index].current_msg_key_info.incoming_msg_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
 		memcpy((encrypt_buffer + im_payload_start_byte + or_offset + cipher_text_byte_offset), (packet + im_payload_start_byte + or_offset + cipher_text_byte_offset), (payload_start_byte - or_offset - cipher_text_byte_offset));
 
+		if(i == 1) {
+			ci_info->ri_pool[im_fingerprint_route_index].current_msg_key_info_cached.new_entry_relay_incoming_msg_relay_user_id = or_data[i].ord_enc.new_uid;
+			memcpy(ci_info->ri_pool[im_fingerprint_route_index].current_msg_key_info_cached.new_entry_relay_incoming_msg_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		} else if(i == 0) {
+			ci_info->ri_pool[im_fingerprint_route_index].current_msg_key_info_cached.new_incoming_msg_relay_user_id = or_data[i].ord_enc.new_uid;
+			memcpy(ci_info->ri_pool[im_fingerprint_route_index].current_msg_key_info_cached.new_incoming_msg_aes_key, or_data[i].ord_enc.new_key, AES_KEY_SIZE_BYTES);
+		}
 		previous_route_index = route_index;
 		or_offset -= sizeof(onion_route_data);
 	}
@@ -4224,6 +4271,28 @@ static int generate_incoming_message_onion_routes_from_routes_to_supply(conversa
 
 	memcpy(im_route_supplied1, &(im_onions[0]), sizeof(route_info));
 	memcpy(im_route_supplied2, &(im_onions[1]), sizeof(route_info));
+
+	return 0;
+}
+
+static int update_im_uid_for_relay_index(conversation_info *ci_info, int im_relay_index)
+{
+	if(ci_info == NULL) {
+		return -1;
+	}
+
+	if((im_relay_index < 0) || (im_relay_index >= RELAY_POOL_MAX_SIZE)) {
+		return -1;
+	}
+	if(ci_info->ri_pool[im_relay_index].is_active != 1) {
+		return -1;
+	}
+
+	ci_info->ri_pool[im_relay_index].current_msg_key_info.incoming_msg_relay_user_id = ci_info->ri_pool[im_relay_index].current_msg_key_info_cached.new_incoming_msg_relay_user_id;
+	memcpy(ci_info->ri_pool[im_relay_index].current_msg_key_info.incoming_msg_aes_key, ci_info->ri_pool[im_relay_index].current_msg_key_info_cached.new_incoming_msg_aes_key, AES_KEY_SIZE_BYTES);
+
+	ci_info->ri_pool[ci_info->index_of_entry_relay].current_msg_key_info.incoming_msg_relay_user_id = ci_info->ri_pool[im_relay_index].current_msg_key_info_cached.new_entry_relay_incoming_msg_relay_user_id;
+	memcpy(ci_info->ri_pool[ci_info->index_of_entry_relay].current_msg_key_info.incoming_msg_aes_key, ci_info->ri_pool[im_relay_index].current_msg_key_info_cached.new_entry_relay_incoming_msg_aes_key, AES_KEY_SIZE_BYTES);
 
 	return 0;
 }

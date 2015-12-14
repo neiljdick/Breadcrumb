@@ -141,6 +141,14 @@ typedef struct msg_key_info
 	unsigned int outgoing_msg_relay_user_id;
 } msg_key_info;
 
+typedef struct msg_key_info_cached
+{
+	unsigned char new_incoming_msg_aes_key[AES_KEY_SIZE_BYTES];
+	unsigned int new_incoming_msg_relay_user_id;
+	unsigned char new_entry_relay_incoming_msg_aes_key[AES_KEY_SIZE_BYTES];
+	unsigned int new_entry_relay_incoming_msg_relay_user_id;
+} msg_key_info_cached;
+
 typedef struct relay_info
 {
 	int is_active;
@@ -152,7 +160,7 @@ typedef struct relay_info
 	id_key_info current_key_info;
 	id_key_info key_info_history[PATH_HISTORY_LENGTH];
 	msg_key_info current_msg_key_info;
-	msg_key_info msg_key_info_history[PATH_HISTORY_LENGTH];
+	msg_key_info_cached current_msg_key_info_cached;
 	unsigned char im_fingerprint[IM_FINGERPRINT_LENGTH];
 	int kih_index;
 	RSA *public_cert;
@@ -236,6 +244,19 @@ typedef struct thread_comm
 	command_attempts curr_attempts;
 	uint8_t command_data[THREAD_COMMAND_DATA_SIZE];
 } thread_comm;
+
+typedef enum {
+	IM_NO_COMMAND						= 0,
+	HANDLE_NEW_IM_MESSAGE
+} message_command;
+
+typedef struct incoming_message_comm
+{
+	message_command curr_command; 
+	int im_relay_index;
+	uint16_t message_displayed;
+	unsigned char curr_message[MAX_MESSAGE_SIZE];
+} incoming_message_comm;
 
 const char *bandwidth_log_name = "bandwidth.csv";
 
