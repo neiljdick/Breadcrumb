@@ -845,7 +845,9 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 										inet_ntoa(rr1_ip_addr), rr1_ip_data->onion_return_port, inet_ntoa(rr2_ip_addr), rr2_ip_data->onion_return_port);
 			#endif
 			for (i = 0; i < 32; ++i) {
-				if(pd_ptr->onion_r1 == g_message_cache[i].onion_r1) {
+				if((pd_ptr->client_id != g_message_cache[i].client_id) && 
+						(pd_ptr->onion_r1 == g_message_cache[i].onion_r1) &&
+							(pd_ptr->conversation_id == g_message_cache[i].conversation_id)) {
 					fprintf(stdout, "Found matching onion, %x\n", pd_ptr->onion_r1);
 
 					ret = fill_buf_with_random_data(packet_data, packet_size_bytes);
@@ -859,7 +861,9 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 
 					memset(&(g_message_cache[i]), 0, sizeof(payload_data));
 					break;
-				} else if(pd_ptr->onion_r2 == g_message_cache[i].onion_r1) {
+				} else if((pd_ptr->client_id != g_message_cache[i].client_id) && 
+							(pd_ptr->onion_r2 == g_message_cache[i].onion_r1) &&
+								(pd_ptr->conversation_id == g_message_cache[i].conversation_id)) {
 					fprintf(stdout, "Found matching onion, %x\n", pd_ptr->onion_r2);
 
 					ret = fill_buf_with_random_data(packet_data, packet_size_bytes);
