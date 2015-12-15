@@ -1,7 +1,7 @@
 #include "client.h"
 
 //#define LOG_TO_FILE_INSTEAD_OF_STDOUT
-#define ENABLE_LOGGING
+//#define ENABLE_LOGGING
 //#define ENABLE_TRANSMIT_RECEIVE_LOGGING
 //#define ENABLE_KEY_HISTORY_LOGGING
 //#define ENABLE_BANDWIDTH_LOGGING
@@ -35,7 +35,10 @@ sem_t th_comm_sem;
 thread_comm g_th_comm;
 
 sem_t im_comm_sem;
-incoming_message_comm im_message_comm;
+incoming_message_comm im_comm;
+
+sem_t om_comm_sem;
+outgoing_message_comm om_comm;
 
 unsigned char g_user_id[USER_NAME_MAX_LENGTH];
 int g_current_conversation_index;
@@ -84,7 +87,7 @@ static int initialize_should_receive_dummy_packet_command(void);
 static char get_send_packet_char(void);
 static int commit_current_key_info_to_history(relay_info *r_info);
 static int commit_key_info_to_history(conversation_info *ci_info);
-static int create_and_add_user_message_to_queue(conversation_info *ci_info, char *msg);
+static int create_and_add_user_message_to_queue(conversation_info *ci_info, unsigned char *msg, unsigned int msg_len);
 static int commit_route_info_to_history(packet_type type, conversation_info *info, route_info *r_info, route_info *return_r_info, void *arg);
 static int print_key_history(relay_info *r_info);
 static int print_return_key_history(relay_info *r_info);
@@ -195,10 +198,12 @@ static int init_globals(int argc, char const *argv[])
 	sem_init(&th_comm_sem, 0, 1);
 	sem_init(&g_sp_node_sem, 0, 1);
 	sem_init(&im_comm_sem, 0, 1);
+	sem_init(&om_comm_sem, 0, 1);
 
 	g_sp_node = NULL;
 	g_current_conversation_index = 0;
-	memset(&im_message_comm, 0, sizeof(im_message_comm));
+	memset(&im_comm, 0, sizeof(im_comm));
+	memset(&om_comm, 0, sizeof(om_comm));
 
 	if(strlen(argv[1]) > USER_NAME_MAX_LENGTH) {
 		fprintf(stdout, "%s Username must be less than %u characters\n", feedback_tag, USER_NAME_MAX_LENGTH);
@@ -306,7 +311,7 @@ static int init_self_ip(char *thread_id)
 static void handle_chat(void)
 {
 	int i, ret;
-	char cmnd_buf[COMMAND_BUFFER_SIZE];
+	char cmnd_buf[MAX_MESSAGE_SIZE];
 	pthread_t user_input_thread;
 
 	while(1) {
@@ -314,14 +319,14 @@ static void handle_chat(void)
 			strcpy(cmnd_buf, connect_to_chat_cmnd);
 			strcpy(cmnd_buf + strlen(connect_to_chat_cmnd), "TEST_HARNESS_MODE");
 		#else
-			memset(cmnd_buf, 0, COMMAND_BUFFER_SIZE);
+			memset(cmnd_buf, 0, MAX_MESSAGE_SIZE);
 			fprintf(stdout, "%c[2K", 27);
 			fprintf(stdout, "\r%c ", prompt_char);
 			fgets(cmnd_buf, sizeof(cmnd_buf), stdin);
 		#endif
 		if (strncasecmp(cmnd_buf, connect_to_chat_cmnd, strlen(connect_to_chat_cmnd)) == 0) {
 			g_enable_send_packet_handler = 1;
-			for (i = 0; i < COMMAND_BUFFER_SIZE; ++i) {
+			for (i = 0; i < MAX_MESSAGE_SIZE; ++i) {
 				if(cmnd_buf[i] == '\n') {
 					cmnd_buf[i] = '\0';
 				}
@@ -353,7 +358,7 @@ static void handle_chat(void)
 			fprintf(stdout, "%s\t\t\tDisplay this help dialog\n", help_cmnd);
 		} else {
 			fprintf(stdout, "Unrecognized command: ");
-			for (i = 0; i < COMMAND_BUFFER_SIZE; ++i) {
+			for (i = 0; i < MAX_MESSAGE_SIZE; ++i) {
 				if(cmnd_buf[i] == '\n') {
 					break;
 				}
@@ -366,23 +371,66 @@ static void handle_chat(void)
 
 static int handle_chat_commands(void) 
 {
+	unsigned int i, j;
+	unsigned char buf[MAX_MESSAGE_SIZE];
+
 	sem_wait(&im_comm_sem);
-	if(im_message_comm.curr_command == HANDLE_NEW_IM_MESSAGE) {
+	if(im_comm.curr_command == HANDLE_NEW_INCOMING_CHAT_MESSAGE) {
 		fprintf(stdout, "%c[2K", 27);
-		fprintf(stdout, "\r%s/> %s", g_conversations[g_current_conversation_index].friend_name, im_message_comm.curr_message);
+		fprintf(stdout, "\r%s/> ", g_conversations[g_current_conversation_index].friend_name);
+		i = 0;
+		while(1) {
+			fprintf(stdout, "%c", im_comm.curr_message[i]);
+			if((im_comm.curr_message[i] == '\n') && (im_comm.curr_message[i+1] != '\0')) {
+				fprintf(stdout, "\r%s/> ", g_conversations[g_current_conversation_index].friend_name);
+			}
+			if(im_comm.curr_message[i+1] == '\0') {
+				break;
+			}
+			i++;
+			if(i >= (MAX_MESSAGE_SIZE - 1)) {
+				break;
+			}
+		}
 		fprintf(stdout, "%s ", my_chat_tag);
 		fflush(stdout);
-		im_message_comm.message_displayed = 1;
+		im_comm.message_displayed = 1;
 
-		update_im_uid_for_relay_index(&g_conversations[g_current_conversation_index], im_message_comm.im_relay_index);
-		im_message_comm.curr_command = IM_NO_COMMAND;
+		update_im_uid_for_relay_index(&g_conversations[g_current_conversation_index], im_comm.im_relay_index);
+		im_comm.curr_command = IM_NO_COMMAND;
 	}
 	sem_post(&im_comm_sem);
 
+	sem_wait(&om_comm_sem);
 	if(g_queue_packet_for_transmission) {
-		//handle_dummy_packet_transmission();
+		if(om_comm.curr_command == HANDLE_NEW_OUTGOING_CHAT_MSG) {
+			if(om_comm.om_buf_rd_index != om_comm.om_buf_wr_index) {
+				i = 0;
+				j = om_comm.om_buf_rd_index;
+				while(1) {
+					buf[i++] = om_comm.om_message_buffer[j++];
+					if(i == (MAX_MESSAGE_SIZE - 1)) {
+						break;
+					}
+					if(j == OM_MESSAGE_BUFFER_SIZE) {
+						j = 0;
+					}
+					if(j == om_comm.om_buf_wr_index) {
+						break;
+					}
+				}
+				om_comm.om_buf_rd_index = j;
+
+				buf[i++] = '\0';
+				create_and_add_user_message_to_queue(&g_conversations[g_current_conversation_index], buf, i);
+			}
+			om_comm.curr_command = OM_NO_COMMAND;
+		} else {
+			handle_dummy_packet_transmission();
+		}
 		g_queue_packet_for_transmission = 0;
 	}
+	sem_post(&om_comm_sem);
 
 	return 0;
 }
@@ -431,18 +479,32 @@ static int init_handle_user_input_thread(pthread_t *user_input_thread)
 
 void *user_input_handler(void *ptr)
 {
+	unsigned int i, j;
 	char *pthread_ret;
-	char buf[USER_INPUT_BUF_LEN];
+	char buf[MAX_MESSAGE_SIZE];
 
 	#ifdef ENABLE_USER_INPUT_THREAD_LOGGING
 		fprintf(stdout, "[USER INPUT THREAD] User input thread begin\n");
 	#endif
 
 	while(1) {
-		usleep(200000);
+		while(1) {
+			if(om_comm.om_buf_wr_index > om_comm.om_buf_rd_index) {
+				if((OM_MESSAGE_BUFFER_SIZE - (om_comm.om_buf_wr_index - om_comm.om_buf_rd_index)) > MAX_MESSAGE_SIZE) {
+					break;
+				}
+			} else if (om_comm.om_buf_wr_index < om_comm.om_buf_rd_index) {
+				if((om_comm.om_buf_rd_index - om_comm.om_buf_wr_index) > MAX_MESSAGE_SIZE) {
+					break;
+				}
+			} else {
+				break;
+			}
+			usleep(200000);
+		}
 
 		fprintf(stdout, "%s ", my_chat_tag);
-		memset(buf, 0, USER_INPUT_BUF_LEN);
+		memset(buf, 0, MAX_MESSAGE_SIZE);
 		fgets(buf, sizeof(buf), stdin);
 		if (strncasecmp(buf, close_cmnd, strlen(close_cmnd)) == 0) {
 			g_close_current_chat = 1;
@@ -457,7 +519,25 @@ void *user_input_handler(void *ptr)
 			}
 		#endif
 		else {
-			create_and_add_user_message_to_queue(&(g_conversations[g_current_conversation_index]), buf);
+			sem_wait(&om_comm_sem);
+			i = 0;
+			j = om_comm.om_buf_wr_index;
+			while(1) {
+				om_comm.om_message_buffer[j++] = buf[i];
+				if(j >= OM_MESSAGE_BUFFER_SIZE) {
+					j = 0;
+				}
+				if(buf[i] == '\n') {
+					break;
+				}
+				i++;
+				if(i >= MAX_MESSAGE_SIZE) {
+					break;
+				}
+			}
+			om_comm.om_buf_wr_index = j;
+			om_comm.curr_command = HANDLE_NEW_OUTGOING_CHAT_MSG;
+			sem_post(&om_comm_sem);
 		}
 	}
 
@@ -594,7 +674,7 @@ static int handle_message_packet(char *packet, int rr_index)
 
 	while(1) {
 		sem_wait(&im_comm_sem);
-		if(im_message_comm.curr_command == IM_NO_COMMAND) {
+		if(im_comm.curr_command == IM_NO_COMMAND) {
 			break;
 		} else {
 			sem_post(&im_comm_sem);
@@ -602,10 +682,10 @@ static int handle_message_packet(char *packet, int rr_index)
 		}
 	}
 
-	im_message_comm.curr_command = HANDLE_NEW_IM_MESSAGE;
-	im_message_comm.message_displayed = 0;
-	im_message_comm.im_relay_index = rr_index;
-	memcpy(im_message_comm.curr_message, packet + (ONION_ROUTE_DATA_SIZE * 3), MAX_MESSAGE_SIZE);
+	im_comm.curr_command = HANDLE_NEW_INCOMING_CHAT_MESSAGE;
+	im_comm.message_displayed = 0;
+	im_comm.im_relay_index = rr_index;
+	memcpy(im_comm.curr_message, packet + (ONION_ROUTE_DATA_SIZE * 3), MAX_MESSAGE_SIZE);
 
 	sem_post(&im_comm_sem);
 
@@ -872,7 +952,7 @@ static int handle_dummy_packet_transmission(void)
 		return 0;
 	}
 
-	/*ret = get_num_of_incoming_message_routes_to_supply(&(g_conversations[g_current_conversation_index]), &num_im_routes_to_supply);
+	ret = get_num_of_incoming_message_routes_to_supply(&(g_conversations[g_current_conversation_index]), &num_im_routes_to_supply);
 	if(ret < 0) {
 		return -1;
 	}
@@ -884,7 +964,7 @@ static int handle_dummy_packet_transmission(void)
 			send_incoming_message_return_route_packet(&(g_conversations[g_current_conversation_index]));
 			return 0;
 		}
-	}*/
+	}
 
 	perform_relay_verification = 0;
 	rand_val = get_random_number(0) % (DO_NODE_CONNECTION_CHECK + 1);
@@ -3103,7 +3183,7 @@ static int send_dummy_packet_with_routes_defined(conversation_info *ci_info, rou
 	return 0;
 }
 
-static int create_and_add_user_message_to_queue(conversation_info *ci_info, char *msg)
+static int create_and_add_user_message_to_queue(conversation_info *ci_info, unsigned char *msg, unsigned int msg_len)
 {
 	int ret;
 	route_info forward_route, im_route;
@@ -3113,7 +3193,7 @@ static int create_and_add_user_message_to_queue(conversation_info *ci_info, char
 		return -1;
 	}
 
-	if((strlen(msg) + 1) > MAX_MESSAGE_SIZE) {
+	if(msg_len > MAX_MESSAGE_SIZE) {
 		fprintf(stdout, "%s Message too large, maximum size = %d characters\n", feedback_tag, MAX_MESSAGE_SIZE);
 		return -1;
 	}
@@ -3124,7 +3204,7 @@ static int create_and_add_user_message_to_queue(conversation_info *ci_info, char
 	if(ret < 0) {
 		return -1;
 	}
-	memcpy((msg_packet_payload.payload + MESSAGE_OFFSET), msg, (strlen(msg) + 1));
+	memcpy((msg_packet_payload.payload + MESSAGE_OFFSET), msg, msg_len);
 
 	ret = generate_random_outgoing_message_route(ci_info, &im_route);
 	if(ret < 0) {

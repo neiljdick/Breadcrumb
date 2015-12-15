@@ -65,10 +65,9 @@ char *program_name = "Client";
 #define MIN_PACKET_TRANSMISSION_DELAY_US		(500000)
 
 #define MAX_MESSAGE_SIZE 						(PAYLOAD_SIZE_BYTES - MESSAGE_OFFSET)
-#define COMMAND_BUFFER_SIZE 					(MAX_MESSAGE_SIZE)
-#define USER_INPUT_BUF_LEN 						(MAX_MESSAGE_SIZE)
+#define OM_MESSAGE_BUFFER_SIZE 					(MAX_MESSAGE_SIZE * 2) // TODO
 
-#define PROVIDE_MESSAGE_RETURN_ROUTE_PERCENT 	(40)
+#define PROVIDE_MESSAGE_RETURN_ROUTE_PERCENT 	(60)
 
 #define ID_HASH_COUNT 							(3000000)
 
@@ -247,16 +246,29 @@ typedef struct thread_comm
 
 typedef enum {
 	IM_NO_COMMAND						= 0,
-	HANDLE_NEW_IM_MESSAGE
-} message_command;
+	HANDLE_NEW_INCOMING_CHAT_MESSAGE
+} im_message_command;
 
 typedef struct incoming_message_comm
 {
-	message_command curr_command; 
+	im_message_command curr_command; 
 	int im_relay_index;
 	uint16_t message_displayed;
 	unsigned char curr_message[MAX_MESSAGE_SIZE];
 } incoming_message_comm;
+
+typedef enum {
+	OM_NO_COMMAND						= 0,
+	HANDLE_NEW_OUTGOING_CHAT_MSG
+} om_message_command;
+
+typedef struct outgoing_message_comm
+{
+	om_message_command curr_command;
+	uint32_t om_buf_rd_index;
+	uint32_t om_buf_wr_index;
+	unsigned char om_message_buffer[OM_MESSAGE_BUFFER_SIZE];
+} outgoing_message_comm;
 
 const char *bandwidth_log_name = "bandwidth.csv";
 
