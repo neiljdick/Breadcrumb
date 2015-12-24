@@ -12,11 +12,8 @@
 #define ONION_ROUTE_DATA_SIZE 					((AES_KEY_SIZE_BYTES * 2) + 32)
 #define PAYLOAD_SIZE_BYTES 						((ONION_ROUTE_DATA_SIZE * MAX_ROUTE_LENGTH) * 2)
 #define PACKET_SIZE_BYTES 						(((ONION_ROUTE_DATA_SIZE * MAX_ROUTE_LENGTH) * 2) + (sizeof(payload_data)))
-
-extern const unsigned int payload_start_byte;
-extern const unsigned int cipher_text_byte_offset;
-extern const unsigned int max_payload_len;
-extern const unsigned int packet_size_bytes;
+#define MESSAGE_OFFSET	 						(ONION_ROUTE_DATA_SIZE * 2)
+#define IM_FINGERPRINT_LENGTH 					(ONION_ROUTE_DATA_SIZE - sizeof(return_route_ip_data))
 
 typedef enum payload_type {
 	DUMMY_PACKET_NO_RETURN_ROUTE = 0,
@@ -46,6 +43,7 @@ typedef struct onion_route_data
 
 typedef struct id_cache_data
 {
+	uint64_t padding_rsa_1024;
 	uint8_t aes_key[AES_KEY_SIZE_BYTES];
 	uint32_t relay_user_id;
 	uint8_t payload_aes_key[AES_KEY_SIZE_BYTES];
@@ -54,6 +52,10 @@ typedef struct id_cache_data
 	uint32_t return_route_user_id;
 	uint8_t return_route_payload_aes_key[AES_KEY_SIZE_BYTES];
 	uint32_t return_route_payload_user_id;
+	uint8_t incoming_msg_aes_key[AES_KEY_SIZE_BYTES];
+	uint32_t incoming_msg_relay_user_id;
+	uint8_t outgoing_msg_aes_key[AES_KEY_SIZE_BYTES];
+	uint32_t outgoing_msg_relay_user_id;
 } id_cache_data;
 
 typedef struct payload_data
@@ -66,6 +68,20 @@ typedef struct payload_data
 	uint32_t conversation_id;
 	uint8_t payload[PAYLOAD_SIZE_BYTES];
 } payload_data;
+
+typedef struct return_route_ip_data
+{
+	uint64_t onion_return_ip;
+	uint16_t onion_return_port;
+	uint16_t padding_1;
+	uint32_t padding_2;
+} return_route_ip_data;
+
+extern const unsigned int payload_start_byte;
+extern const unsigned int cipher_text_byte_offset;
+extern const unsigned int max_payload_len;
+extern const unsigned int packet_size_bytes;
+extern const unsigned char im_fingerprint_blank[IM_FINGERPRINT_LENGTH];
 
 int initialize_packet_definitions(char *thread_id);
 int get_ord_packet_checksum(onion_route_data_encrypted *ord_enc, uint16_t *ord_checksum);

@@ -1,12 +1,12 @@
 #include "relay.h"
 
-//#define LOG_TO_FILE_INSTEAD_OF_STDOUT
-//#define ENABLE_LOGGING
-#define DEBUG_MODE
-//#define ENABLE_THREAD_LOGGING
-//#define PRINT_PACKETS
+#define ENABLE_LOGGING
 #define ENABLE_LOG_ON_EXIT
-//#define RECORD_UIDS
+//#define ENABLE_THREAD_LOGGING
+//#define ENABLE_PACKET_LOGGING
+//#define ENABLE_UID_LOGGING
+//#define LOG_TO_FILE_INSTEAD_OF_STDOUT
+//#define SOFT_RESET_KEY_STORE
 //#define ENABLE_BANDWIDTH_REPORTING_UI
 
 sem_t keystore_sem, logging_sem;
@@ -24,6 +24,9 @@ logging_interval g_logging_interval;
 logging_data g_logging_data;
 unsigned int num_relay_packets_bandwidth_report;
 
+payload_data g_message_cache[32];
+int g_message_index = 0;
+
 void init_globals(int argc, char *argv[]);
 void handle_pthread_ret(char *thread_id, int ret);
 void handle_pthread_bytesread(int bytes_read, int clientfd);
@@ -33,7 +36,7 @@ void log_data_to_file(int dummy);
 void log_data_to_file_and_exit(int dummy);
 void handle_bandwidth_reporting(void);
 
-#ifdef RECORD_UIDS
+#ifdef ENABLE_UID_LOGGING
 FILE *fp_set_uids=NULL;
 #endif
 
@@ -43,7 +46,7 @@ int main(int argc, char *argv[])
 	pthread_t certificate_request_thread, thread_pool_manager_thread;
 	pthread_t client_msg_new_connection_handler_thread, client_id_cache_handler_thread;
 
-	#ifdef RECORD_UIDS
+	#ifdef ENABLE_UID_LOGGING
 		fp_set_uids = fopen("set_uids.csv", "w");
 		if(fp_set_uids == NULL)
 			exit(1);
@@ -163,7 +166,7 @@ void init_globals(int argc, char *argv[])
 		freopen(buf, "w", stdout);
 	#endif
 
-	ret = get_hash_of_string("[MAIN THREAD]", RELAY_ID_HASH_COUNT, argv[1], &g_relay_id, &g_relay_id_len);
+	ret = get_sha256_hash_of_string("[MAIN THREAD]", RELAY_ID_HASH_COUNT, argv[1], &g_relay_id, &g_relay_id_len);
 	if(ret < 0) {
 		exit(-2);	
 	}
@@ -190,6 +193,8 @@ void init_globals(int argc, char *argv[])
 	sem_init(&logging_sem, 0, 1);
 	memset(&g_logging_data, 0, sizeof(g_logging_data));
 
+	memset(g_message_cache, 0, sizeof(g_message_cache)); // TODO - remove
+
 	if(argc > 3) {
 		g_logging_interval = (unsigned int)atoi(argv[3]);
 		if(g_logging_interval > PER_WEEK) {
@@ -207,7 +212,7 @@ int initialize_key_store(char *thread_id)
 
 	sem_init(&keystore_sem, 0, 1);
 
-	#ifdef DEBUG_MODE
+	#ifdef SOFT_RESET_KEY_STORE
 		ret = init_key_store(thread_id, SOFT);
 	#else
 		ret = init_key_store(thread_id, HARD);
@@ -628,7 +633,7 @@ void *handle_msg_client_thread(void *ptr)
 			break;
 	}
 	handle_pthread_bytesread(bytes_read, client_socket);
-	#ifdef PRINT_PACKETS
+	#ifdef ENABLE_PACKET_LOGGING
 		fprintf(stdout, "\n ------------------------------------------------------------ \n\n");
 		for (i = 0; i < packet_size_bytes; ++i) {
 			fprintf(stdout, "%02x", packet_data_encrypted[i]);
@@ -648,7 +653,7 @@ void *handle_msg_client_thread(void *ptr)
 			close(client_socket);
 			sem_wait(&logging_sem);
 			g_logging_data.num_key_get_failures[g_logging_data.logging_index]++;
-			fprintf(stdout, "KF_OD_I: %u\n", or_data_ptr->uid);
+			fprintf(stderr, "KF_OD_I: %u\n", or_data_ptr->uid);
 			sem_post(&logging_sem);
 			handle_pthread_ret(thread_id_buf, -5);
 		} 
@@ -675,7 +680,7 @@ void *handle_msg_client_thread(void *ptr)
 		close(client_socket);
 		sem_wait(&logging_sem);
 		g_logging_data.num_key_get_failures[g_logging_data.logging_index]++;
-		fprintf(stdout, "KF_OD: %u\n", or_data_ptr->uid);
+		fprintf(stderr, "KF_OD: %u\n", or_data_ptr->uid);
 		sem_post(&logging_sem);
 		handle_pthread_ret(thread_id_buf, -5);
 	}
@@ -687,7 +692,7 @@ void *handle_msg_client_thread(void *ptr)
 		close(client_socket);
 		handle_pthread_ret(thread_id_buf, ret);
 	}
-	#ifdef RECORD_UIDS
+	#ifdef ENABLE_UID_LOGGING
 		fprintf(fp_set_uids, "%u,\n", or_data_decrypted_ptr->ord_enc.new_uid);
 	#endif
 
@@ -701,7 +706,7 @@ void *handle_msg_client_thread(void *ptr)
 			close(client_socket);
 			sem_wait(&logging_sem);
 			g_logging_data.num_key_get_failures[g_logging_data.logging_index]++;
-			fprintf(stdout, "KF_PD_I: %u\n", or_payload_data_ptr->uid);
+			fprintf(stderr, "KF_PD_I: %u\n", or_payload_data_ptr->uid);
 			sem_post(&logging_sem);
 			handle_pthread_ret(thread_id_buf, -5);
 		} 
@@ -727,7 +732,7 @@ void *handle_msg_client_thread(void *ptr)
 		close(client_socket);
 		sem_wait(&logging_sem);
 		g_logging_data.num_key_get_failures[g_logging_data.logging_index]++;
-		fprintf(stdout, "KF_PD: %u\n", or_payload_data_ptr->uid);
+		fprintf(stderr, "KF_PD: %u\n", or_payload_data_ptr->uid);
 		sem_post(&logging_sem);
 		handle_pthread_ret(thread_id_buf, -5);
 	}
@@ -739,7 +744,7 @@ void *handle_msg_client_thread(void *ptr)
 		close(client_socket);
 		handle_pthread_ret(thread_id_buf, ret);
 	}
-	#ifdef RECORD_UIDS
+	#ifdef ENABLE_UID_LOGGING
 		fprintf(fp_set_uids, "%u,\n", or_payload_data_decrypted_ptr->ord_enc.new_uid);
 	#endif
 
@@ -761,9 +766,9 @@ void *handle_msg_client_thread(void *ptr)
 		sem_wait(&logging_sem);
 		g_logging_data.num_non_relay_packets[g_logging_data.logging_index]++;
 		g_logging_data.total_num_of_relay_threads_destroyed[g_logging_data.logging_index]++;
+		num_relay_packets_bandwidth_report += 1;
 		sem_post(&logging_sem);
 
-		num_relay_packets_bandwidth_report += 1;
 	} else {
 		next_addr.s_addr = or_data_decrypted_ptr->ord_enc.next_pkg_ip;
 		#ifdef ENABLE_LOGGING
@@ -775,9 +780,8 @@ void *handle_msg_client_thread(void *ptr)
 		sem_wait(&logging_sem);
 		g_logging_data.num_relay_packets[g_logging_data.logging_index]++;
 		g_logging_data.total_num_of_relay_threads_destroyed[g_logging_data.logging_index]++;
-		sem_post(&logging_sem);
-
 		num_relay_packets_bandwidth_report += 2;
+		sem_post(&logging_sem);
 	}
 
 	#ifdef ENABLE_THREAD_LOGGING
@@ -790,10 +794,12 @@ void *handle_msg_client_thread(void *ptr)
 
 int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 {
-	int ret;
+	int i, ret;
 	struct in_addr next_addr;
-	uint16_t next_port;
+	unsigned int next_port;
 	unsigned char packet_data[packet_size_bytes];
+	return_route_ip_data *rr1_ip_data, *rr2_ip_data;
+	struct in_addr rr1_ip_addr, rr2_ip_addr;
 
 	switch(pd_ptr->type) {
 		case DUMMY_PACKET_NO_RETURN_ROUTE:
@@ -803,7 +809,7 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 		break;
 		case DUMMY_PACKET_W_RETURN_ROUTE:
 			next_addr.s_addr = (((uint64_t)pd_ptr->client_id) << 32) | ((uint64_t)pd_ptr->conversation_id);
-			next_port = pd_ptr->onion_r1;
+			next_port = (unsigned int)pd_ptr->onion_r1;
 			#ifdef ENABLE_LOGGING
 				fprintf(stdout, "%s Received non-route packet, type = %s. Next ip = %s, port = %u\n", thread_id, get_string_for_payload_type(pd_ptr->type), inet_ntoa(next_addr), next_port);
 			#endif
@@ -815,6 +821,72 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 			memcpy(packet_data, pd_ptr->payload, sizeof(pd_ptr->payload));
 
 			send_packet_to_relay(packet_data, inet_ntoa(next_addr), next_port);
+		break;
+		case MESSAGE_PACKET:
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "%s Received message packet, onion_r1 = 0x%x, order = 0x%x, client_id = 0x%x, conversation_id = 0x%x. Storing packet\n", 
+									thread_id, pd_ptr->onion_r1, pd_ptr->order, pd_ptr->client_id, pd_ptr->conversation_id);
+			#endif
+			memcpy(&(g_message_cache[g_message_index]), pd_ptr, sizeof(payload_data)); // TODO
+			if((++g_message_index) >= 32) {
+				g_message_index = 0;
+			}
+		break;
+		case DUAL_RETURN_ROUTE:
+			#ifdef ENABLE_LOGGING
+				rr1_ip_data = (return_route_ip_data *)pd_ptr->payload;
+				rr2_ip_data = (return_route_ip_data *)(pd_ptr->payload + payload_start_byte);
+				rr1_ip_addr.s_addr = rr1_ip_data->onion_return_ip;
+				rr2_ip_addr.s_addr = rr2_ip_data->onion_return_ip;
+
+				fprintf(stdout, "%s Received return route packet, onion_r1 = 0x%x, onion_r2 = 0x%x, client_id = 0x%x, conversation_id = 0x%x ", 
+									thread_id, pd_ptr->onion_r1, pd_ptr->onion_r2, pd_ptr->client_id, pd_ptr->conversation_id);
+				fprintf(stdout, "onion_r1_ip = %s, onion_r1_port = %u, onion_r1_ip = %s, onion_r2_port = %u. Searching for matching message packet\n", 
+										inet_ntoa(rr1_ip_addr), rr1_ip_data->onion_return_port, inet_ntoa(rr2_ip_addr), rr2_ip_data->onion_return_port);
+			#endif
+			for (i = 0; i < 32; ++i) {
+				if((pd_ptr->client_id != g_message_cache[i].client_id) && 
+						(pd_ptr->onion_r1 == g_message_cache[i].onion_r1) &&
+							(pd_ptr->conversation_id == g_message_cache[i].conversation_id)) {
+					fprintf(stdout, "Found matching onion, %x\n", pd_ptr->onion_r1);
+
+					ret = fill_buf_with_random_data(packet_data, packet_size_bytes);
+					if(ret < 0) {
+						return -1;
+					}
+					memcpy(packet_data, pd_ptr->payload + sizeof(return_route_ip_data), ((sizeof(onion_route_data) * 3) - sizeof(return_route_ip_data)));
+					memcpy(packet_data + payload_start_byte, g_message_cache[i].payload, PAYLOAD_SIZE_BYTES);
+
+					send_packet_to_relay(packet_data, inet_ntoa(rr1_ip_addr), rr1_ip_data->onion_return_port);
+
+					memset(&(g_message_cache[i]), 0, sizeof(payload_data));
+					break;
+				} else if((pd_ptr->client_id != g_message_cache[i].client_id) && 
+							(pd_ptr->onion_r2 == g_message_cache[i].onion_r1) &&
+								(pd_ptr->conversation_id == g_message_cache[i].conversation_id)) {
+					fprintf(stdout, "Found matching onion, %x\n", pd_ptr->onion_r2);
+
+					ret = fill_buf_with_random_data(packet_data, packet_size_bytes);
+					if(ret < 0) {
+						return -1;
+					}
+					memcpy(packet_data, pd_ptr->payload + (sizeof(onion_route_data) * 3) + sizeof(return_route_ip_data), ((sizeof(onion_route_data) * 3) - sizeof(return_route_ip_data)));
+					memcpy(packet_data + payload_start_byte, g_message_cache[i].payload, PAYLOAD_SIZE_BYTES);
+
+					send_packet_to_relay(packet_data, inet_ntoa(rr2_ip_addr), rr2_ip_data->onion_return_port);
+
+					memset(&(g_message_cache[i]), 0, sizeof(payload_data));
+					break;
+				}
+			}
+			if(i == 32) {
+				fprintf(stdout, "Failed to find matching message packet\n");
+			}
+		break;
+		default:
+			#ifdef ENABLE_LOGGING
+				fprintf(stdout, "%s Received unknown non-route packet, (type = %u). Dropping packet\n", thread_id, pd_ptr->type);
+			#endif
 		break;
 	}
 
@@ -854,7 +926,7 @@ void *handle_id_cache_thread(void *ptr)
 			break;
 	}
 	handle_pthread_bytesread(bytes_read, client_socket);
-	#ifdef PRINT_PACKETS
+	#ifdef ENABLE_PACKET_LOGGING
 		fprintf(stdout, "\n ------------------------------------------------------------ \n\n");
 		for (i = 0; i < packet_size_bytes; ++i) {
 			fprintf(stdout, "%02x", packet_data_encrypted[i]);
@@ -862,7 +934,7 @@ void *handle_id_cache_thread(void *ptr)
 		fprintf(stdout, "\n\n ------------------------------------------------------------ \n");
 	#endif
 	
-	RSA_private_decrypt(RSA_KEY_LENGTH_BYTES, (packet_data_encrypted + payload_start_byte), packet_data, rsa, RSA_PKCS1_OAEP_PADDING);
+	RSA_private_decrypt(RSA_KEY_LENGTH_BYTES, (packet_data_encrypted + payload_start_byte), packet_data, rsa, RSA_NO_PADDING);
 	id_data = ((id_cache_data *)packet_data);
 	#ifdef ENABLE_LOGGING
 		fprintf(stdout, "%s Received id cache data\n", buf);
@@ -873,6 +945,8 @@ void *handle_id_cache_thread(void *ptr)
 	set_key_for_user_id(buf, id_data->payload_relay_user_id, (key *)id_data->payload_aes_key);
 	set_key_for_user_id(buf, id_data->return_route_user_id, (key *)id_data->return_route_aes_key);
 	set_key_for_user_id(buf, id_data->return_route_payload_user_id, (key *)id_data->return_route_payload_aes_key);
+	set_key_for_user_id(buf, id_data->incoming_msg_relay_user_id, (key *)id_data->incoming_msg_aes_key);
+	set_key_for_user_id(buf, id_data->outgoing_msg_relay_user_id, (key *)id_data->outgoing_msg_aes_key);
 	sem_post(&keystore_sem);
 
 	sem_wait(&logging_sem);
@@ -1077,6 +1151,12 @@ void handle_logging(void)
 		case PER_SECOND:
 			interval_count = 0;
 			perform_logging_shift = 1;
+		break;
+		case PER_FIFTEEN_SECONDS:
+			if((interval_count % 15) == 0) {
+				interval_count = 0;
+				perform_logging_shift = 1;
+			}
 		break;
 		case PER_MINUTE:
 			if((interval_count % 60) == 0) {

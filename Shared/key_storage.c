@@ -1,6 +1,7 @@
 #include "key_storage.h"
 
-//#define ENABLE_LOGGING
+#define ENABLE_LOGGING
+//#define ENABLE_INCREMENT_TASK_LOGGING
 //#define LOG_TO_FILE_INSTEAD_OF_STDOUT
 //#define DEBUG_MODE
 
@@ -353,7 +354,7 @@ int handle_key_entry_age_increment(char *thread_id)
 		g_prev_key_age_inc = 0;
 	}
 
-	#ifdef ENABLE_LOGGING
+	#ifdef ENABLE_INCREMENT_TASK_LOGGING
 		fprintf(stdout, "%s Time to complete key age increment task: %lu us\n", thread_id, res.tv_usec);
 	#endif
 

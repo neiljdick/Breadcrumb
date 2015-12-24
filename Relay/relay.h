@@ -65,6 +65,8 @@ const char *unknown_str 			= "UNKNOWN";
 
 #define TCP_BYTES_OVERHEAD 				(502)
 
+#define RELAY_IP_MAX_LENGTH				(16)
+
 typedef struct client_thread_description
 {
 	pthread_t thread_id;
@@ -87,6 +89,7 @@ typedef struct thread_pool
 typedef enum 
 {
 	PER_SECOND				= 0,
+	PER_FIFTEEN_SECONDS,
 	PER_MINUTE,
 	PER_FIVE_MINUTES,
 	PER_TEN_MINUTES,
