@@ -1,4 +1,4 @@
-- [ ] MAKEFILE!
+- [X] MAKEFILE!
 - [X] ENCRYPT KEY DATABASE
 	- [X] Using hash value of relay password?
 - [X] KEY CLASH STRUCTURE

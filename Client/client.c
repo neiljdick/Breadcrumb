@@ -1,6 +1,5 @@
 #include "client.h"
 
-//#define LOG_TO_FILE_INSTEAD_OF_STDOUT
 //#define ENABLE_LOGGING
 //#define ENABLE_TRANSMIT_RECEIVE_LOGGING
 //#define ENABLE_KEY_HISTORY_LOGGING
@@ -8,17 +7,17 @@
 //#define ENABLE_TOTAL_UID_LOGGING
 //#define ENABLE_UID_HISTORY_LOGGING
 //#define ENABLE_USER_INPUT_THREAD_LOGGING
-#define DEBUG_MODE
+//#define ENABLE_PACKET_DATA_LOGGING
+//#define ENABLE_UID_GENERATION_LOGGING
+//#define LOG_TO_FILE_INSTEAD_OF_STDOUT
 //#define LAN_NETWORKING_MODE
-//#define PRINT_PACKETS
-//#define UID_CLASH_ENABLE
-//#define PRINT_UID_GENERATION
-#define FIRST_CLIENT
-#define TEST_RR_PACKET
+#define TEST_MODE
+#define TEST_MODE_CLIENT_1
+//#define TEST_RR_PACKET
+//#define TEST_UID_CLASH
+//#define USING_TEST_HARNESS
 
-//#define TEST_HARNESS_MODE
-
-#ifdef UID_CLASH_ENABLE
+#ifdef TEST_UID_CLASH
 	int g_uid_clash_offset;
 #endif
 #ifdef ENABLE_TOTAL_UID_LOGGING
@@ -104,9 +103,10 @@ static int perform_user_id_init(const char *user_id_raw);
 static int init_chat(char *friend_name, conversation_info *ci_out /* out */);
 static int reset_incoming_routes_to_supply(conversation_info *ci_out);
 static int get_relay_public_certificates_debug(conversation_info *ci_info);
-static int set_entry_relay_for_conversation(conversation_info *ci_info);
+static int set_random_entry_relay_for_conversation(conversation_info *ci_info);
 static int set_relay_keys_for_conversation(conversation_info *ci_info);
 static int set_user_ids_for_conversation(conversation_info *ci_info);
+static int setup_test_mode_conversation(conversation_info *ci_out);
 static int perform_user_id_registration(char *thread_id, conversation_info *ci_info);
 static int get_index_of_next_free_conversation(conversation_info *conversations);
 static int create_packet(packet_type type, conversation_info *ci_info, route_info *r_info, payload_data *payload, void *other, unsigned char *packet, char *destination_ip, int *destination_port);
@@ -252,7 +252,7 @@ static int init_globals(int argc, char const *argv[])
 		}
 	#endif
 
-	#ifdef UID_CLASH_ENABLE
+	#ifdef TEST_UID_CLASH
 		g_uid_clash_offset = get_random_number(0) % 10000;
 	#endif
 	
@@ -265,7 +265,7 @@ static int init_self_ip(char *thread_id)
 {
 	int ret;
 
-	#ifdef DEBUG_MODE
+	#ifdef TEST_MODE
 		ret = get_eth_ip_address(thread_id, g_client_ip_addr, sizeof(g_client_ip_addr));
 		if(ret < 0) {
 			#ifdef ENABLE_LOGGING
@@ -315,9 +315,9 @@ static void handle_chat(void)
 	pthread_t user_input_thread;
 
 	while(1) {
-		#ifdef TEST_HARNESS_MODE
+		#ifdef USING_TEST_HARNESS
 			strcpy(cmnd_buf, connect_to_chat_cmnd);
-			strcpy(cmnd_buf + strlen(connect_to_chat_cmnd), "TEST_HARNESS_MODE");
+			strcpy(cmnd_buf + strlen(connect_to_chat_cmnd), "USING_TEST_HARNESS");
 		#else
 			memset(cmnd_buf, 0, MAX_MESSAGE_SIZE);
 			fprintf(stdout, "%c[2K", 27);
@@ -506,7 +506,7 @@ void *user_input_handler(void *ptr)
 		fprintf(stdout, "%s ", my_chat_tag);
 		memset(buf, 0, MAX_MESSAGE_SIZE);
 		fgets(buf, sizeof(buf), stdin);
-		if (strncasecmp(buf, close_cmnd, strlen(close_cmnd)) == 0) {
+		if (strncasecmp(buf, leave_convo_cmnd, strlen(leave_convo_cmnd)) == 0) {
 			g_close_current_chat = 1;
 			break;
 		} else if (strncasecmp(buf, exit_cmnd, strlen(exit_cmnd)) == 0) {
@@ -617,7 +617,7 @@ static int handle_received_packet(char *packet)
 		return -1;
 	}
 
-	#ifdef PRINT_PACKETS 
+	#ifdef ENABLE_PACKET_DATA_LOGGING 
 		int i;
 		fprintf(stdout, "Received payload: ");
 		for(i = 0; i < packet_size_bytes; i++) {
@@ -1188,43 +1188,19 @@ static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 		fprintf(stdout, "\n");
 	#endif
 
-	#ifndef DEBUG_MODE
+	#ifdef TEST_MODE
 
-		// Talk to conversation index server to initiate conversation
-		// TODO - node filtering (only use nodes with substantially different IP addresses (not with same /16 subnet))
-
-	#else
-		
-		#ifdef FIRST_CLIENT
-			ci_out->index_of_entry_relay = 0;
-			ci_out->index_of_friend_entry_relay = 1;
-		#else
-			ci_out->index_of_entry_relay = 1;
-			ci_out->index_of_friend_entry_relay = 0;
-		#endif	
-		ci_out->index_of_server_relay = 3;
-		strcpy(ci_out->ri_pool[0].relay_ip, "10.10.6.200");
-		strcpy(ci_out->ri_pool[1].relay_ip, "10.10.6.201");
-		strcpy(ci_out->ri_pool[2].relay_ip, "10.10.6.202");
-		strcpy(ci_out->ri_pool[3].relay_ip, "10.10.6.220");
-		ci_out->ri_pool[0].relay_port = 22222;
-		ci_out->ri_pool[1].relay_port = 22222;
-		ci_out->ri_pool[2].relay_port = 22222;
-		ci_out->ri_pool[3].relay_port = 22222;
-		ci_out->ri_pool[0].is_active = 1;
-		ci_out->ri_pool[1].is_active = 1;
-		ci_out->ri_pool[2].is_active = 1;
-		ci_out->ri_pool[3].is_active = 1;
-		ci_out->ri_pool[0].is_responsive = 1;
-		ci_out->ri_pool[1].is_responsive = 1;
-		ci_out->ri_pool[2].is_responsive = 1;
-		ci_out->ri_pool[3].is_responsive = 1;
-		ci_out->conversation_valid = 1;
+		setup_test_mode_conversation(ci_out);
 
 		ret = get_relay_public_certificates_debug(ci_out);
 		if(ret < 0) {
 			return -1;
 		}
+
+	#else
+
+		// Get conversation cookie from conversation indexing server to initiate conversation
+		// TODO - node filtering (only use nodes with substantially different IP addresses (not with same /16 subnet))
 
 	#endif
 
@@ -1238,7 +1214,7 @@ static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 	 */ 
 	//check_validity_of_conversation(&convo_valid);
 
-	//ret = set_entry_relay_for_conversation(ci_out); // TODO - remove 
+	//ret = set_random_entry_relay_for_conversation(ci_out); // TODO - remove 
 	//if(ret < 0) {
 	//	return -1;
 	//}
@@ -1274,6 +1250,42 @@ static int init_chat(char *friend_name, conversation_info *ci_out /* out */)
 	fprintf(stdout, "done\n");
 
 	return ret;
+}
+
+static int setup_test_mode_conversation(conversation_info *ci_out)
+{
+	if(ci_out == NULL) {
+		return -1;
+	}
+
+	#ifdef TEST_MODE_CLIENT_1
+		ci_out->index_of_entry_relay = 0;
+		ci_out->index_of_friend_entry_relay = 1;
+	#else
+		ci_out->index_of_entry_relay = 1;
+		ci_out->index_of_friend_entry_relay = 0;
+	#endif
+
+	ci_out->index_of_server_relay = 3;
+	strcpy(ci_out->ri_pool[0].relay_ip, "10.10.6.200");
+	strcpy(ci_out->ri_pool[1].relay_ip, "10.10.6.201");
+	strcpy(ci_out->ri_pool[2].relay_ip, "10.10.6.202");
+	strcpy(ci_out->ri_pool[3].relay_ip, "10.10.6.220");
+	ci_out->ri_pool[0].relay_port = 22222;
+	ci_out->ri_pool[1].relay_port = 22222;
+	ci_out->ri_pool[2].relay_port = 22222;
+	ci_out->ri_pool[3].relay_port = 22222;
+	ci_out->ri_pool[0].is_active = 1;
+	ci_out->ri_pool[1].is_active = 1;
+	ci_out->ri_pool[2].is_active = 1;
+	ci_out->ri_pool[3].is_active = 1;
+	ci_out->ri_pool[0].is_responsive = 1;
+	ci_out->ri_pool[1].is_responsive = 1;
+	ci_out->ri_pool[2].is_responsive = 1;
+	ci_out->ri_pool[3].is_responsive = 1;
+	ci_out->conversation_valid = 1;
+
+	return 0;
 }
 
 static int get_index_of_next_free_conversation(conversation_info *conversations)
@@ -1466,7 +1478,7 @@ static int get_relay_public_certificates_debug(conversation_info *ci_info)
 	return 0;
 }
 
-__attribute__((unused)) static int set_entry_relay_for_conversation(conversation_info *ci_info)
+__attribute__((unused)) static int set_random_entry_relay_for_conversation(conversation_info *ci_info)
 {
 	int i;
 	unsigned int initial_seed_value, num_relays;
@@ -1647,13 +1659,13 @@ static int generate_new_user_id(int max_uid, unsigned int *uid /* out */)
 	relay_user_id = get_random_number(initial_seed_value);
 	relay_user_id %= max_uid;
 
-	#ifdef UID_CLASH_ENABLE
+	#ifdef TEST_UID_CLASH
 		relay_user_id %= 5;
 		relay_user_id += g_uid_clash_offset;
 	#endif
 	*uid = relay_user_id;
 	
-	#ifdef PRINT_UID_GENERATION 
+	#ifdef ENABLE_UID_GENERATION_LOGGING 
 		fprintf(stdout, "[MAIN THREAD] Generated new user ID = %u, max = %u\n", *uid, max_uid);
 	#endif
 
@@ -1901,7 +1913,7 @@ static int initialize_relay_verification_command(payload_data *verification_payl
 	g_th_comm.curr_attempts.num_attempts = 0;
 	memcpy(g_th_comm.command_data, (verification_payload->payload + sizeof(onion_route_data)), THREAD_RETURN_PACKET_CONFIRM_SIZE);
 
-	#ifdef PRINT_PACKETS
+	#ifdef ENABLE_PACKET_DATA_LOGGING
 		int i;
 		fprintf(stdout, "Init payload: ");
 		for(i = 0; i < THREAD_RETURN_PACKET_CONFIRM_SIZE; i++) {
@@ -1927,7 +1939,7 @@ static int initialize_entry_relay_verification_command(payload_data *verificatio
 	g_th_comm.curr_attempts.num_attempts = 0;
 	memcpy(g_th_comm.command_data, verification_payload->payload, THREAD_RETURN_PACKET_CONFIRM_SIZE);
 
-	#ifdef PRINT_PACKETS
+	#ifdef ENABLE_PACKET_DATA_LOGGING
 		int i;
 		fprintf(stdout, "Init payload: ");
 		for(i = 0; i < THREAD_RETURN_PACKET_CONFIRM_SIZE; i++) {

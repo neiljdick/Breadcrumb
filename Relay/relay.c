@@ -1,12 +1,12 @@
 #include "relay.h"
 
-//#define LOG_TO_FILE_INSTEAD_OF_STDOUT
 #define ENABLE_LOGGING
-#define DEBUG_MODE
-//#define ENABLE_THREAD_LOGGING
-//#define PRINT_PACKETS
 #define ENABLE_LOG_ON_EXIT
-//#define RECORD_UIDS
+//#define ENABLE_THREAD_LOGGING
+//#define ENABLE_PACKET_LOGGING
+//#define ENABLE_UID_LOGGING
+//#define LOG_TO_FILE_INSTEAD_OF_STDOUT
+//#define SOFT_RESET_KEY_STORE
 //#define ENABLE_BANDWIDTH_REPORTING_UI
 
 sem_t keystore_sem, logging_sem;
@@ -36,7 +36,7 @@ void log_data_to_file(int dummy);
 void log_data_to_file_and_exit(int dummy);
 void handle_bandwidth_reporting(void);
 
-#ifdef RECORD_UIDS
+#ifdef ENABLE_UID_LOGGING
 FILE *fp_set_uids=NULL;
 #endif
 
@@ -46,7 +46,7 @@ int main(int argc, char *argv[])
 	pthread_t certificate_request_thread, thread_pool_manager_thread;
 	pthread_t client_msg_new_connection_handler_thread, client_id_cache_handler_thread;
 
-	#ifdef RECORD_UIDS
+	#ifdef ENABLE_UID_LOGGING
 		fp_set_uids = fopen("set_uids.csv", "w");
 		if(fp_set_uids == NULL)
 			exit(1);
@@ -212,7 +212,7 @@ int initialize_key_store(char *thread_id)
 
 	sem_init(&keystore_sem, 0, 1);
 
-	#ifdef DEBUG_MODE
+	#ifdef SOFT_RESET_KEY_STORE
 		ret = init_key_store(thread_id, SOFT);
 	#else
 		ret = init_key_store(thread_id, HARD);
@@ -633,7 +633,7 @@ void *handle_msg_client_thread(void *ptr)
 			break;
 	}
 	handle_pthread_bytesread(bytes_read, client_socket);
-	#ifdef PRINT_PACKETS
+	#ifdef ENABLE_PACKET_LOGGING
 		fprintf(stdout, "\n ------------------------------------------------------------ \n\n");
 		for (i = 0; i < packet_size_bytes; ++i) {
 			fprintf(stdout, "%02x", packet_data_encrypted[i]);
@@ -692,7 +692,7 @@ void *handle_msg_client_thread(void *ptr)
 		close(client_socket);
 		handle_pthread_ret(thread_id_buf, ret);
 	}
-	#ifdef RECORD_UIDS
+	#ifdef ENABLE_UID_LOGGING
 		fprintf(fp_set_uids, "%u,\n", or_data_decrypted_ptr->ord_enc.new_uid);
 	#endif
 
@@ -744,7 +744,7 @@ void *handle_msg_client_thread(void *ptr)
 		close(client_socket);
 		handle_pthread_ret(thread_id_buf, ret);
 	}
-	#ifdef RECORD_UIDS
+	#ifdef ENABLE_UID_LOGGING
 		fprintf(fp_set_uids, "%u,\n", or_payload_data_decrypted_ptr->ord_enc.new_uid);
 	#endif
 
@@ -926,7 +926,7 @@ void *handle_id_cache_thread(void *ptr)
 			break;
 	}
 	handle_pthread_bytesread(bytes_read, client_socket);
-	#ifdef PRINT_PACKETS
+	#ifdef ENABLE_PACKET_LOGGING
 		fprintf(stdout, "\n ------------------------------------------------------------ \n\n");
 		for (i = 0; i < packet_size_bytes; ++i) {
 			fprintf(stdout, "%02x", packet_data_encrypted[i]);

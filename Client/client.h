@@ -78,7 +78,7 @@ const char *feedback_tag	= "-!-";
 const char *connect_to_chat_cmnd 			= "/connect ";
 const char *network_connectivity_test_cmnd 	= "/network";
 const char *exit_cmnd 						= "/exit";
-const char *close_cmnd						= "/close";
+const char *leave_convo_cmnd				= "/leave";
 const char *help_cmnd 						= "/help";
 const char *test_rr_cmnd					= "/testrr";
 
