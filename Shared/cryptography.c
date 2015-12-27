@@ -1,6 +1,6 @@
 #include "cryptography.h"
 
-#define ENABLE_LOGGING
+//#define ENABLE_LOGGING
 
 static int added_all_algorithms = 0;
 
@@ -8,6 +8,7 @@ int init_cryptography_env()
 {
 	if(added_all_algorithms == 0) {
 		OpenSSL_add_all_algorithms();
+		ERR_load_crypto_strings();
 		added_all_algorithms = 1;
 	}
 
@@ -23,7 +24,7 @@ int load_public_key_into_buffer(const char *thread_id, char **rsa_public_out /* 
 		return -1;
 	}
 
-	fp_pub_key = fopen(RELAY_RSA_PUBLIC_KEY_FILE, "r");
+	fp_pub_key = fopen(NODE_RSA_PUBLIC_KEY_FILE, "r");
 	if(fp_pub_key == NULL) {
 		#ifdef ENABLE_LOGGING
 			fprintf(stdout, "%s Failed to open public RSA key file\n", thread_id);
@@ -58,25 +59,25 @@ int load_public_key_into_buffer(const char *thread_id, char **rsa_public_out /* 
 	return 0;
 }
 
-int load_rsa_key_pair(const char *relay_id, RSA **rsa_out /* out */)
+int load_rsa_key_pair(const char *node_id, RSA **rsa_out /* out */)
 {
 	FILE *fp_pub_key, *fp_priv_key;
 	int ret;
 
-	if((rsa_out == NULL) || (relay_id == NULL)) {
+	if((rsa_out == NULL) || (node_id == NULL)) {
 		return -1;
 	}
 
 	init_cryptography_env();
 
-	fp_pub_key = fopen(RELAY_RSA_PUBLIC_KEY_FILE, "r");
-	fp_priv_key = fopen(RELAY_RSA_PRIVATE_KEY_FILE, "r");
+	fp_pub_key = fopen(NODE_RSA_PUBLIC_KEY_FILE, "r");
+	fp_priv_key = fopen(NODE_RSA_PRIVATE_KEY_FILE, "r");
 	if((fp_pub_key == NULL) || (fp_priv_key == NULL)) {
 		#ifdef ENABLE_LOGGING
 			fprintf(stdout, "[MAIN THREAD] Failed to read RSA key file, generating key pair instead\n");
 		#endif
 
-		ret = generate_rsa_key_pair(relay_id, rsa_out);
+		ret = generate_rsa_key_pair(node_id, rsa_out);
 		if(ret < 0) {
 			return -1;
 		}
@@ -108,10 +109,10 @@ int save_key_pair_to_file(RSA *rsa_key_pair)
 
 	init_cryptography_env();
 
-	fp_pub_key = fopen(RELAY_RSA_PUBLIC_KEY_FILE, "w");
+	fp_pub_key = fopen(NODE_RSA_PUBLIC_KEY_FILE, "w");
 	if(fp_pub_key == NULL) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to open public key file %s\n", RELAY_RSA_PUBLIC_KEY_FILE);
+			fprintf(stdout, "[MAIN THREAD] Failed to open public key file %s\n", NODE_RSA_PUBLIC_KEY_FILE);
 		#endif
 
 		return -1;
@@ -119,10 +120,10 @@ int save_key_pair_to_file(RSA *rsa_key_pair)
 	PEM_write_RSAPublicKey(fp_pub_key, rsa_key_pair);
 	fclose(fp_pub_key);
 
-	fp_priv_key = fopen(RELAY_RSA_PRIVATE_KEY_FILE, "w");
+	fp_priv_key = fopen(NODE_RSA_PRIVATE_KEY_FILE, "w");
 	if(fp_priv_key == NULL) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to open private key file %s\n", RELAY_RSA_PRIVATE_KEY_FILE);
+			fprintf(stdout, "[MAIN THREAD] Failed to open private key file %s\n", NODE_RSA_PRIVATE_KEY_FILE);
 		#endif
 
 		return -1;
@@ -247,19 +248,19 @@ int cb(char *buf, int size, int rwflag, void *u)
 	return password_size;
 }
 
-int generate_rsa_key_pair(const char *relay_id, RSA **rsa_out /* out */)
+int generate_rsa_key_pair(const char *node_id, RSA **rsa_out /* out */)
 {
 	BIGNUM *e;
 	int ret;
 
-	if((relay_id == NULL) || (rsa_out == NULL)) {
+	if((node_id == NULL) || (rsa_out == NULL)) {
 		return -1;
 	}
 
 	init_cryptography_env();
 
 	*rsa_out = RSA_new();
-	RAND_seed((const void *)relay_id, strlen(relay_id));
+	RAND_seed((const void *)node_id, strlen(node_id));
 	ret = RAND_status();
 	if(ret != 1) {
 		#ifdef ENABLE_LOGGING
@@ -343,31 +344,6 @@ int aes_encrypt_block(char *thread_id, unsigned char *plaintext, int plaintext_l
 
 	EVP_CIPHER_CTX_cleanup(&ctx);
 
-/*	#ifdef ENABLE_LOGGING
-		int i;
-		fprintf(stdout, "%s AES encryption function, encrypting block:", thread_id);
-		for (i = 0; i < plaintext_len; ++i) {
-			fprintf(stdout, "%02x", 0xFF & plaintext[i]);
-		}
-		fprintf(stdout, "\n");
-		fprintf(stdout, "%s AES encryption function, iv:", thread_id);
-		for (i = 0; i < 16; ++i) {
-			fprintf(stdout, "%02x", 0xFF & iv[i]);
-		}
-		fprintf(stdout, "\n");
-		fprintf(stdout, "%s AES encryption function, key:", thread_id);
-		for (i = 0; i < 16; ++i) {
-			fprintf(stdout, "%02x", 0xFF & key[i]);
-		}
-		fprintf(stdout, "\n");
-		fprintf(stdout, "%s AES encryption function, encrypted block:", thread_id);
-		for (i = 0; i < plaintext_len; ++i) {
-			fprintf(stdout, "%02x", 0xFF & cipher_text[i]);
-		}
-		fprintf(stdout, "\n");
-	#endif*/
-
-
 	return 0;	
 }
 
@@ -423,30 +399,6 @@ int aes_decrypt_block(char *thread_id, unsigned char *cipher_text, int cipher_te
 
 	EVP_CIPHER_CTX_cleanup(&ctx);
 
-/*	#ifdef ENABLE_LOGGING
-		int i;
-		fprintf(stdout, "%s AES encryption function, decrypting block:", thread_id);
-		for (i = 0; i < cipher_text_len; ++i) {
-			fprintf(stdout, "%02x", 0xFF & cipher_text[i]);
-		}
-		fprintf(stdout, "\n");
-		fprintf(stdout, "%s AES encryption function, iv:", thread_id);
-		for (i = 0; i < 16; ++i) {
-			fprintf(stdout, "%02x", 0xFF & iv[i]);
-		}
-		fprintf(stdout, "\n");
-		fprintf(stdout, "%s AES encryption function, key:", thread_id);
-		for (i = 0; i < 16; ++i) {
-			fprintf(stdout, "%02x", 0xFF & key[i]);
-		}
-		fprintf(stdout, "\n");
-		fprintf(stdout, "%s AES encryption function, decrypted block:", thread_id);
-		for (i = 0; i < cipher_text_len; ++i) {
-			fprintf(stdout, "%02x", 0xFF & plaintext[i]);
-		}
-		fprintf(stdout, "\n");
-	#endif*/
-
 	return 0;	
 }
 
@@ -500,7 +452,7 @@ int fill_buf_with_random_data(unsigned char *buf, int buf_len)
 	return 0;
 }
 
-int get_hash_of_string(char *thread_id, int hash_count, const char *in_str, char **out_str /* out */, int *relay_id_len /* out */)
+int get_sha256_hash_of_string(char *thread_id, int hash_count, const char *in_str, char **out_str /* out */, int *out_str_len /* out */)
 {
 	char tmp_hash[SHA256_DIGEST_LENGTH];
 	SHA256_CTX sha256;
@@ -510,7 +462,7 @@ int get_hash_of_string(char *thread_id, int hash_count, const char *in_str, char
 		return -1;
 	}
 
-	*relay_id_len = (SHA256_DIGEST_LENGTH*2);
+	*out_str_len = (SHA256_DIGEST_LENGTH*2);
 	*out_str = calloc((SHA256_DIGEST_LENGTH*2), sizeof(char));
 	if(*out_str == NULL) {
 		#ifdef ENABLE_LOGGING
@@ -536,18 +488,22 @@ int get_hash_of_string(char *thread_id, int hash_count, const char *in_str, char
     return 0;
 }
 
-int get_pseudo_random_number(unsigned int initial_seed)
+int get_random_number(unsigned int initial_seed)
 {
 	unsigned int seed, rand_val;
 	FILE* dev_urandom;
+	struct timeval tv;
 
-	dev_urandom = fopen("/dev/urandom", "r");
+	gettimeofday(&tv, NULL);
+	dev_urandom = fopen("/dev/urandom", "r"); // TODO try multiple times!
 	if(dev_urandom == NULL) {
 		seed = initial_seed ^ (unsigned int)time(NULL);
+		seed ^= (unsigned int)tv.tv_usec;
 	} else {
 		fread(&seed, sizeof(unsigned int), 1, dev_urandom);
 		seed ^= initial_seed;
 		seed ^= (unsigned int)time(NULL);
+		seed ^= (unsigned int)tv.tv_usec;
 		fclose(dev_urandom);
 	}
 

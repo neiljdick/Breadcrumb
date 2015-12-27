@@ -30,9 +30,16 @@
 
 #define UPNP_LOCAL_PORT_ANY		(0)
 
-#define PORT_MAX				(65533)
+#ifndef PORT_MAX
+	#define PORT_MAX 							(65533)
+#endif
+#ifndef PORT_MIN
+	#define PORT_MIN 							(16384)
+#endif
 
 #define IP_BUF_MAX_LEN 			(64)
+
+#define TCP_BYTE_OVERHEAD 		(66)
 
 int get_public_ip_address(char *thread_id, char *public_ip_addr, int public_ip_buf_len);
 int get_lan_ip_address(char *thread_id, char *public_ip_addr, int public_ip_buf_len);

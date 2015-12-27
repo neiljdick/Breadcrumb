@@ -1,11 +1,12 @@
 #include "packet_definition.h"
 
-#define ENABLE_LOGGING
+//#define ENABLE_LOGGING
 
 const unsigned int packet_size_bytes = (((ONION_ROUTE_DATA_SIZE * MAX_ROUTE_LENGTH) * 2) + (sizeof(payload_data)));
 const unsigned int payload_start_byte = (MAX_ROUTE_LENGTH * sizeof(onion_route_data));
 const unsigned int cipher_text_byte_offset = offsetof(onion_route_data, ord_enc);
 const unsigned int max_payload_len = (PACKET_SIZE_BYTES - (2 * (MAX_ROUTE_LENGTH * sizeof(onion_route_data))));
+const unsigned char im_fingerprint_blank[IM_FINGERPRINT_LENGTH] = {0};
 
 int initialize_packet_definitions(char *thread_id)
 {

@@ -1,0 +1,43 @@
+- [X] MAKEFILE!
+- [X] ENCRYPT KEY DATABASE
+	- [X] Using hash value of relay password?
+- [X] KEY CLASH STRUCTURE
+	- [X] Modify key backup structure
+- [X] KEY AGE INCREMENT
+	- [X] Increment clash keys also
+	- [X] Only increment for X seconds at a time
+- [ ] SPIDER
+	- [ ] Keep track of which relays are online
+- [ ] MESSAGE FUNCTIONALITY
+	- [ ] Send and match return routes with messages
+	- [ ] Review if should be adding 'payload_start_byte' to encrypt buffer in some cases
+- [ ] PEER DISCOVERY
+	- [ ] Directory of relays
+	- [ ] Can query relay for other relays
+- [ ] CERTIFICATE DIRECTORY
+	- [ ] Accessed via TOR?
+- [ ] DOS PREVENTION
+	- [ ] Proof of work?
+	- [ ] Use CAM to prevent key registry too often?
+- [ ] XOR UID W/ RANDOM DATA (KEY?)
+	- [ ] Otherwise previously sent packets could be attacked (as it is known to what value certain part of packet pertains)
+- [X] KEEP AVERAGE BANDWIDTH CONSTANT ?
+	- [X] Send dummy packets in order to keep bandwidth constant
+- [X] RELAY USAGE STATS
+	- [X] Print to csv upon receiving signal
+		- [X] Average packet forwards / sec
+		- [X] Average new key subscriptions / sec
+		- [X] Total number of messages
+		- [X] Total number of key clashes
+		- [X] Total number of keys used
+		- [X] Total number of key expirations
+- [X] MULTIPLE CLIENTS
+	- [X] Appropriate locking of key store
+- [ ] TESTING!
+	- [ ] Overnight, multiple clients
+	- [ ] DOS attack 
+
+
+-------------------------------------------------------- BUG TRACKING --------------------------------------------------------------------
+- Need to fix issue when pressing 'Ctrl-C' when relay is asking for relay password
+- Need to check that when generate UID it is not a part of history or one that is currently in use
