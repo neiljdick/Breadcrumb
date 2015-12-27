@@ -41,15 +41,15 @@ char *program_name = "Client";
 #define MAX_READ_ATTEMPTS 						(5)
 #define LISTEN_BACKLOG_MAX 						(5)
 
-#define MINIMUM_NUM_RELAYS_REQ_FOR_REGISTER 	(3)
+#define MINIMUM_NUM_NODES_REQ_FOR_REGISTER 		(3)
 
 #define PUBLIC_KEY_CERT_SIZE					(251)
 #define USER_NAME_MIN_LENGTH 					(4)
 #define USER_NAME_MAX_LENGTH 					(32)
-#define RELAY_POOL_MAX_SIZE						(20)
+#define NODE_POOL_MAX_SIZE						(20)
 #define MAX_CONVERSATIONS						(32)
-#define RELAY_IP_MAX_LENGTH						(16)
-#define RELAY_ID_LEN 							((SHA256_DIGEST_LENGTH * 2) + 1)
+#define NODE_IP_MAX_LENGTH						(16)
+#define NODE_ID_LEN 							((SHA256_DIGEST_LENGTH * 2) + 1)
 #define PATH_HISTORY_LENGTH						(20)
 #define MAX_UID_HISTORY_RECONNECT_ATTEMPTS 		(3)
 
@@ -82,11 +82,11 @@ const char *leave_convo_cmnd				= "/leave";
 const char *help_cmnd 						= "/help";
 const char *test_rr_cmnd					= "/testrr";
 
-const char *public_cert_dir = ".relay_certs";
+const char *public_cert_dir = ".node_certs";
 
 typedef enum {
-	REGISTER_UIDS_WITH_ENTRY_RELAY = 0,
-	REGISTER_UIDS_WITH_RELAY,
+	REGISTER_UIDS_WITH_ENTRY_NODE = 0,
+	REGISTER_UIDS_WITH_NODE,
 	DUMMY_PACKET,
 	DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS,
 	DUMMY_PACKET_USING_RETURN_ROUTE_KEY_UID_PAIRS_FOR_VERIFICATION,
@@ -114,18 +114,18 @@ typedef enum {
 	APPLY_RETURN_KEY_HISTORY,
 } return_key_history_type;
 
-typedef struct relay_indexer_info
+typedef struct node_indexer_info
 {
 	char *ip_address;
 	RSA *public_cert;
-} relay_indexer_info;
+} node_indexer_info;
 
 typedef struct id_key_info
 {
 	unsigned char aes_key[AES_KEY_SIZE_BYTES];
-	unsigned int relay_user_id;
+	unsigned int node_user_id;
 	unsigned char payload_aes_key[AES_KEY_SIZE_BYTES];
-	unsigned int payload_relay_user_id;
+	unsigned int payload_node_user_id;
 	unsigned char return_route_aes_key[AES_KEY_SIZE_BYTES];
 	unsigned int return_route_user_id;
 	unsigned char return_route_payload_aes_key[AES_KEY_SIZE_BYTES];
@@ -135,27 +135,27 @@ typedef struct id_key_info
 typedef struct msg_key_info
 {
 	unsigned char incoming_msg_aes_key[AES_KEY_SIZE_BYTES];
-	unsigned int incoming_msg_relay_user_id;
+	unsigned int incoming_msg_node_user_id;
 	unsigned char outgoing_msg_aes_key[AES_KEY_SIZE_BYTES];
-	unsigned int outgoing_msg_relay_user_id;
+	unsigned int outgoing_msg_node_user_id;
 } msg_key_info;
 
 typedef struct msg_key_info_cached
 {
 	unsigned char new_incoming_msg_aes_key[AES_KEY_SIZE_BYTES];
-	unsigned int new_incoming_msg_relay_user_id;
-	unsigned char new_entry_relay_incoming_msg_aes_key[AES_KEY_SIZE_BYTES];
-	unsigned int new_entry_relay_incoming_msg_relay_user_id;
+	unsigned int new_incoming_msg_node_user_id;
+	unsigned char new_entry_node_incoming_msg_aes_key[AES_KEY_SIZE_BYTES];
+	unsigned int new_entry_node_incoming_msg_node_user_id;
 } msg_key_info_cached;
 
-typedef struct relay_info
+typedef struct node_info
 {
 	int is_active;
 	int is_responsive;
 	unsigned int max_uid;
-	char relay_id[RELAY_ID_LEN];
-	char relay_ip[RELAY_IP_MAX_LENGTH];
-	unsigned int relay_port;
+	char node_id[NODE_ID_LEN];
+	char node_ip[NODE_IP_MAX_LENGTH];
+	unsigned int node_port;
 	id_key_info current_key_info;
 	id_key_info key_info_history[PATH_HISTORY_LENGTH];
 	msg_key_info current_msg_key_info;
@@ -163,11 +163,11 @@ typedef struct relay_info
 	unsigned char im_fingerprint[IM_FINGERPRINT_LENGTH];
 	int kih_index;
 	RSA *public_cert;
-} relay_info;
+} node_info;
 
 typedef struct route_info
 {
-	int relay_route[MAX_ROUTE_LENGTH];
+	int node_route[MAX_ROUTE_LENGTH];
 	int route_length;
 } route_info;
 
@@ -176,12 +176,12 @@ typedef struct conversation_info
 	int conversation_valid;
 	unsigned char conversation_name[USER_NAME_MAX_LENGTH];
 	unsigned char friend_name[USER_NAME_MAX_LENGTH];
-	int index_of_server_relay;
-	int index_of_entry_relay;
-	int index_of_friend_entry_relay;
+	int index_of_server_node;
+	int index_of_entry_node;
+	int index_of_friend_entry_node;
 	short outgoing_msg_counter;
-	route_info incoming_message_routes_to_supply[RELAY_POOL_MAX_SIZE];
-	relay_info ri_pool[RELAY_POOL_MAX_SIZE];
+	route_info incoming_message_routes_to_supply[NODE_POOL_MAX_SIZE];
+	node_info ri_pool[NODE_POOL_MAX_SIZE];
 } conversation_info;
 
 typedef struct route_pair
@@ -192,7 +192,7 @@ typedef struct route_pair
 
 typedef struct route_history_info
 {
-	int relay_route[MAX_ROUTE_LENGTH * 2];
+	int node_route[MAX_ROUTE_LENGTH * 2];
 	int route_length;
 } route_history_info;
 
@@ -205,7 +205,7 @@ typedef struct route_history
 typedef struct send_packet_node
 {
 	unsigned char packet_buf[PACKET_SIZE_BYTES];
-	char destination_ip[RELAY_IP_MAX_LENGTH];
+	char destination_ip[NODE_IP_MAX_LENGTH];
 	int destination_port;
 	struct send_packet_node *next;
 } send_packet_node;
@@ -252,7 +252,7 @@ typedef enum {
 typedef struct incoming_message_comm
 {
 	im_message_command curr_command; 
-	int im_relay_index;
+	int im_node_index;
 	uint16_t message_displayed;
 	unsigned char curr_message[MAX_MESSAGE_SIZE];
 } incoming_message_comm;
@@ -301,9 +301,9 @@ typedef enum {
 
 typedef enum {
 	NO_ERROR 							= 0,
-	ENTRY_RELAY_OFFLINE					= 1,
-	SERVER_RELAY_OFFLINE 				= 2,
-	TOO_FEW_RELAYS_ONLINE 				= 4
+	ENTRY_NODE_OFFLINE					= 1,
+	SERVER_NODE_OFFLINE 				= 2,
+	TOO_FEW_NODES_ONLINE 				= 4
 } error_codes;
 
 #endif

@@ -45,17 +45,17 @@ typedef struct id_cache_data
 {
 	uint64_t padding_rsa_1024;
 	uint8_t aes_key[AES_KEY_SIZE_BYTES];
-	uint32_t relay_user_id;
+	uint32_t node_user_id;
 	uint8_t payload_aes_key[AES_KEY_SIZE_BYTES];
-	uint32_t payload_relay_user_id;
+	uint32_t payload_node_user_id;
 	uint8_t return_route_aes_key[AES_KEY_SIZE_BYTES];
 	uint32_t return_route_user_id;
 	uint8_t return_route_payload_aes_key[AES_KEY_SIZE_BYTES];
 	uint32_t return_route_payload_user_id;
 	uint8_t incoming_msg_aes_key[AES_KEY_SIZE_BYTES];
-	uint32_t incoming_msg_relay_user_id;
+	uint32_t incoming_msg_node_user_id;
 	uint8_t outgoing_msg_aes_key[AES_KEY_SIZE_BYTES];
-	uint32_t outgoing_msg_relay_user_id;
+	uint32_t outgoing_msg_node_user_id;
 } id_cache_data;
 
 typedef struct payload_data

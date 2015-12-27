@@ -1,5 +1,5 @@
-#ifndef RELAY_HEADER
-#define RELAY_HEADER
+#ifndef NODE_HEADER
+#define NODE_HEADER
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,9 +20,9 @@
 #include "../Shared/cryptography.h"
 #include "../Shared/packet_definition.h"
 
-const char *program_name = "Relay";
+const char *program_name = "Node";
 
-const char *log_file = "relay_log.csv";
+const char *log_file = "node_log.csv";
 
 const char *msg_handler_str 		= "MSG HANDLER";
 const char *id_cache_handler_str 	= "ID CACHE HANDLER";
@@ -45,7 +45,7 @@ const char *unknown_str 			= "UNKNOWN";
 #define NUM_USER_ID_CACHE_THREADS 		(50)
 #define USER_ID_CACHE_THREAD_MAX_AGE 	(5)
 
-#define RELAY_ID_HASH_COUNT 			(3000)
+#define NODE_ID_HASH_COUNT 			(3000)
 
 #define NUM_THREAD_POOLS				(2)
 #define MSG_THREAD_POOL_INDEX			(0)
@@ -65,7 +65,7 @@ const char *unknown_str 			= "UNKNOWN";
 
 #define TCP_BYTES_OVERHEAD 				(502)
 
-#define RELAY_IP_MAX_LENGTH				(16)
+#define NODE_IP_MAX_LENGTH				(16)
 
 typedef struct client_thread_description
 {
@@ -107,14 +107,14 @@ typedef struct
 	unsigned long logging_index_valid[LOGGING_DATA_LEN];
 	unsigned long num_cert_requests[LOGGING_DATA_LEN];
 	unsigned long num_id_cache_packets[LOGGING_DATA_LEN];
-	unsigned long num_relay_packets[LOGGING_DATA_LEN];
-	unsigned long num_non_relay_packets[LOGGING_DATA_LEN];
+	unsigned long num_node_packets[LOGGING_DATA_LEN];
+	unsigned long num_non_node_packets[LOGGING_DATA_LEN];
 	float percentage_of_keystore_used[LOGGING_DATA_LEN];
 	unsigned long num_key_get_failures[LOGGING_DATA_LEN];
 	unsigned long total_num_of_id_cache_threads_created[LOGGING_DATA_LEN];
-	unsigned long total_num_of_relay_threads_created[LOGGING_DATA_LEN];
+	unsigned long total_num_of_node_threads_created[LOGGING_DATA_LEN];
 	unsigned long total_num_of_id_cache_threads_destroyed[LOGGING_DATA_LEN];
-	unsigned long total_num_of_relay_threads_destroyed[LOGGING_DATA_LEN];
+	unsigned long total_num_of_node_threads_destroyed[LOGGING_DATA_LEN];
 } logging_data;
 
 int initialize_key_store(char *thread_id);
@@ -130,7 +130,7 @@ int initialize_thread_pools();
 int get_index_of_unused_thread_descriptor(client_thread_description *cthread_pool, unsigned int thread_pool_length, int *index /* out */);
 int get_thread_pool_id_from_index(int index, char *pool_id /* out */);
 int handle_non_route_packet(char *thread_id, payload_data *pd_ptr);
-int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destination_port);
+int send_packet_to_node(unsigned char *packet, char *destination_ip, int destination_port);
 int apply_packet_mixing_delay(void);
 
 #endif

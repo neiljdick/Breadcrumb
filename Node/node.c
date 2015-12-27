@@ -1,4 +1,4 @@
-#include "relay.h"
+#include "node.h"
 
 #define ENABLE_LOGGING
 #define ENABLE_LOG_ON_EXIT
@@ -17,12 +17,12 @@ client_thread_description user_id_cache_pool[NUM_USER_ID_CACHE_THREADS];
 
 unsigned int g_client_msg_port, g_id_cache_port, g_cert_request_port;
 unsigned int g_max_uid, g_total_key_clash_backups;
-char *g_relay_id;
-int g_relay_id_len;
+char *g_node_id;
+int g_node_id_len;
 RSA *rsa;
 logging_interval g_logging_interval;
 logging_data g_logging_data;
-unsigned int num_relay_packets_bandwidth_report;
+unsigned int num_node_packets_bandwidth_report;
 
 payload_data g_message_cache[32];
 int g_message_index = 0;
@@ -63,7 +63,7 @@ int main(int argc, char *argv[])
 		fprintf(stdout, "[MAIN THREAD] %s program begin\n", program_name);
 	#endif
 
-	ret = load_rsa_key_pair(g_relay_id, &rsa);
+	ret = load_rsa_key_pair(g_node_id, &rsa);
 	if(ret < 0) {
 		exit(-2);	
 	}
@@ -156,7 +156,7 @@ void init_globals(int argc, char *argv[])
 	}
 
 	if(argc < 3) {
-		fprintf(stdout, "[MAIN THREAD] Usage: ./%s RELAY_ID PORT [LOGGING INTERVAL]\n", program_name);
+		fprintf(stdout, "[MAIN THREAD] Usage: ./%s NODE_ID PORT [LOGGING INTERVAL]\n", program_name);
 		exit(-1);
 	}
 
@@ -166,12 +166,12 @@ void init_globals(int argc, char *argv[])
 		freopen(buf, "w", stdout);
 	#endif
 
-	ret = get_sha256_hash_of_string("[MAIN THREAD]", RELAY_ID_HASH_COUNT, argv[1], &g_relay_id, &g_relay_id_len);
+	ret = get_sha256_hash_of_string("[MAIN THREAD]", NODE_ID_HASH_COUNT, argv[1], &g_node_id, &g_node_id_len);
 	if(ret < 0) {
 		exit(-2);	
 	}
 	#ifdef ENABLE_LOGGING
-		fprintf(stdout, "[MAIN THREAD] Relay id=%s\n", g_relay_id);
+		fprintf(stdout, "[MAIN THREAD] Node id=%s\n", g_node_id);
 	#endif
 
 	g_client_msg_port = (unsigned int)atoi(argv[2]);
@@ -265,7 +265,7 @@ void *certificate_request_handler_thread(void *ptr)
 		#endif
 
 		write(client_socket, &g_max_uid, sizeof(g_max_uid));
-		write(client_socket, g_relay_id, g_relay_id_len); // TODO check all bytes are sent
+		write(client_socket, g_node_id, g_node_id_len); // TODO check all bytes are sent
 		write(client_socket, public_key_buffer, public_key_buffer_len);
 		fsync(client_socket);
 		close(client_socket);
@@ -310,7 +310,7 @@ void *client_msg_new_connection_handler(void *ptr)
 		add_new_thread_to_pool("[MSG CONNECTION HANDLER THREAD]", MSG_THREAD_POOL_INDEX, client_socket);
 
 		sem_wait(&logging_sem);
-		g_logging_data.total_num_of_relay_threads_created[g_logging_data.logging_index]++;
+		g_logging_data.total_num_of_node_threads_created[g_logging_data.logging_index]++;
 		sem_post(&logging_sem);
 	}
 }
@@ -764,9 +764,9 @@ void *handle_msg_client_thread(void *ptr)
 		handle_non_route_packet(thread_id_buf, pd_ptr);
 
 		sem_wait(&logging_sem);
-		g_logging_data.num_non_relay_packets[g_logging_data.logging_index]++;
-		g_logging_data.total_num_of_relay_threads_destroyed[g_logging_data.logging_index]++;
-		num_relay_packets_bandwidth_report += 1;
+		g_logging_data.num_non_node_packets[g_logging_data.logging_index]++;
+		g_logging_data.total_num_of_node_threads_destroyed[g_logging_data.logging_index]++;
+		num_node_packets_bandwidth_report += 1;
 		sem_post(&logging_sem);
 
 	} else {
@@ -775,12 +775,12 @@ void *handle_msg_client_thread(void *ptr)
 			fprintf(stdout, "%s Found next ip = %s, port = %u\n", thread_id_buf, inet_ntoa(next_addr), or_data_decrypted_ptr->ord_enc.next_pkg_port);
 		#endif
 
-		send_packet_to_relay(packet_data, inet_ntoa(next_addr), or_data_decrypted_ptr->ord_enc.next_pkg_port);
+		send_packet_to_node(packet_data, inet_ntoa(next_addr), or_data_decrypted_ptr->ord_enc.next_pkg_port);
 
 		sem_wait(&logging_sem);
-		g_logging_data.num_relay_packets[g_logging_data.logging_index]++;
-		g_logging_data.total_num_of_relay_threads_destroyed[g_logging_data.logging_index]++;
-		num_relay_packets_bandwidth_report += 2;
+		g_logging_data.num_node_packets[g_logging_data.logging_index]++;
+		g_logging_data.total_num_of_node_threads_destroyed[g_logging_data.logging_index]++;
+		num_node_packets_bandwidth_report += 2;
 		sem_post(&logging_sem);
 	}
 
@@ -820,7 +820,7 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 			}
 			memcpy(packet_data, pd_ptr->payload, sizeof(pd_ptr->payload));
 
-			send_packet_to_relay(packet_data, inet_ntoa(next_addr), next_port);
+			send_packet_to_node(packet_data, inet_ntoa(next_addr), next_port);
 		break;
 		case MESSAGE_PACKET:
 			#ifdef ENABLE_LOGGING
@@ -857,7 +857,7 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 					memcpy(packet_data, pd_ptr->payload + sizeof(return_route_ip_data), ((sizeof(onion_route_data) * 3) - sizeof(return_route_ip_data)));
 					memcpy(packet_data + payload_start_byte, g_message_cache[i].payload, PAYLOAD_SIZE_BYTES);
 
-					send_packet_to_relay(packet_data, inet_ntoa(rr1_ip_addr), rr1_ip_data->onion_return_port);
+					send_packet_to_node(packet_data, inet_ntoa(rr1_ip_addr), rr1_ip_data->onion_return_port);
 
 					memset(&(g_message_cache[i]), 0, sizeof(payload_data));
 					break;
@@ -873,7 +873,7 @@ int handle_non_route_packet(char *thread_id, payload_data *pd_ptr)
 					memcpy(packet_data, pd_ptr->payload + (sizeof(onion_route_data) * 3) + sizeof(return_route_ip_data), ((sizeof(onion_route_data) * 3) - sizeof(return_route_ip_data)));
 					memcpy(packet_data + payload_start_byte, g_message_cache[i].payload, PAYLOAD_SIZE_BYTES);
 
-					send_packet_to_relay(packet_data, inet_ntoa(rr2_ip_addr), rr2_ip_data->onion_return_port);
+					send_packet_to_node(packet_data, inet_ntoa(rr2_ip_addr), rr2_ip_data->onion_return_port);
 
 					memset(&(g_message_cache[i]), 0, sizeof(payload_data));
 					break;
@@ -941,12 +941,12 @@ void *handle_id_cache_thread(void *ptr)
 	#endif
 
 	sem_wait(&keystore_sem);
-	set_key_for_user_id(buf, id_data->relay_user_id, (key *)id_data->aes_key);
-	set_key_for_user_id(buf, id_data->payload_relay_user_id, (key *)id_data->payload_aes_key);
+	set_key_for_user_id(buf, id_data->node_user_id, (key *)id_data->aes_key);
+	set_key_for_user_id(buf, id_data->payload_node_user_id, (key *)id_data->payload_aes_key);
 	set_key_for_user_id(buf, id_data->return_route_user_id, (key *)id_data->return_route_aes_key);
 	set_key_for_user_id(buf, id_data->return_route_payload_user_id, (key *)id_data->return_route_payload_aes_key);
-	set_key_for_user_id(buf, id_data->incoming_msg_relay_user_id, (key *)id_data->incoming_msg_aes_key);
-	set_key_for_user_id(buf, id_data->outgoing_msg_relay_user_id, (key *)id_data->outgoing_msg_aes_key);
+	set_key_for_user_id(buf, id_data->incoming_msg_node_user_id, (key *)id_data->incoming_msg_aes_key);
+	set_key_for_user_id(buf, id_data->outgoing_msg_node_user_id, (key *)id_data->outgoing_msg_aes_key);
 	sem_post(&keystore_sem);
 
 	sem_wait(&logging_sem);
@@ -958,14 +958,14 @@ void *handle_id_cache_thread(void *ptr)
 		fprintf(stdout, "%s Client thread exit\n", buf);
 	#endif
 
-	// TODO need to prevent flood of new keys from non relay client! Make sure only 1 packet / 3 sec from same IP
+	// TODO need to prevent flood of new keys from non node client! Make sure only 1 packet / 3 sec from same IP
 
 	close(client_socket);
 	pthread_ret = (char *)0;
 	pthread_exit(pthread_ret);
 }
 
-int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destination_port)
+int send_packet_to_node(unsigned char *packet, char *destination_ip, int destination_port)
 {
 	int i, ret, bytes_sent;
 	int source_port, cr_socket;
@@ -987,7 +987,7 @@ int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destin
 	bzero((char *) &client_addr, sizeof(client_addr));
 	client_addr.sin_family = AF_INET;
 	for(i = 0; i < NUM_BIND_ATTEMPTS; i++) {
-		initial_seed_value = (((unsigned int)g_relay_id[1])<<24) | (((unsigned int)g_relay_id[3])<<16) | (((unsigned int)g_relay_id[0])<<8) | ((unsigned int)g_relay_id[2]);
+		initial_seed_value = (((unsigned int)g_node_id[1])<<24) | (((unsigned int)g_node_id[3])<<16) | (((unsigned int)g_node_id[0])<<8) | ((unsigned int)g_node_id[2]);
 		source_port = get_random_number(initial_seed_value);
 		source_port %= 65535;
 		if(source_port < 16384)
@@ -1008,7 +1008,7 @@ int send_packet_to_relay(unsigned char *packet, char *destination_ip, int destin
 	ret = connect(cr_socket, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
 	if(ret != 0){
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to connect to relay with ip = %s\n", destination_ip);
+			fprintf(stdout, "[MAIN THREAD] Failed to connect to node with ip = %s\n", destination_ip);
 		#endif
 
 		return -1;
@@ -1074,7 +1074,7 @@ void handle_pthread_ret(char *thread_id, int ret)
 	char *pthread_ret;
 
 	sem_wait(&logging_sem);
-	g_logging_data.total_num_of_relay_threads_destroyed[g_logging_data.logging_index]++;
+	g_logging_data.total_num_of_node_threads_destroyed[g_logging_data.logging_index]++;
 	sem_post(&logging_sem);
 
 	print_ret_code(thread_id, ret);
@@ -1106,18 +1106,18 @@ __attribute__((unused)) void handle_bandwidth_reporting(void)
 {
 	static float average_bandwidth[((USEC_PER_SEC/MAIN_THREAD_SLEEP_USEC) * 3)];
 	static unsigned int average_bandwidth_index = 0;
-	static unsigned int prev_num_relay_packets_bandwidth_report = 0;
-	unsigned int num_packets_relayed, i;
+	static unsigned int prev_num_node_packets_bandwidth_report = 0;
+	unsigned int num_packets_nodeed, i;
 	float bandwidth, average_bandwidth_reporting;
 
-	if(prev_num_relay_packets_bandwidth_report > num_relay_packets_bandwidth_report) {
-		num_packets_relayed = num_relay_packets_bandwidth_report + (UINT_MAX - prev_num_relay_packets_bandwidth_report);
+	if(prev_num_node_packets_bandwidth_report > num_node_packets_bandwidth_report) {
+		num_packets_nodeed = num_node_packets_bandwidth_report + (UINT_MAX - prev_num_node_packets_bandwidth_report);
 	} else {
-		num_packets_relayed = num_relay_packets_bandwidth_report - prev_num_relay_packets_bandwidth_report;
+		num_packets_nodeed = num_node_packets_bandwidth_report - prev_num_node_packets_bandwidth_report;
 	}
-	prev_num_relay_packets_bandwidth_report = num_relay_packets_bandwidth_report;
+	prev_num_node_packets_bandwidth_report = num_node_packets_bandwidth_report;
 
-	bandwidth = (((float)packet_size_bytes + (float)TCP_BYTES_OVERHEAD) * (float)num_packets_relayed) * (float)(USEC_PER_SEC/MAIN_THREAD_SLEEP_USEC);
+	bandwidth = (((float)packet_size_bytes + (float)TCP_BYTES_OVERHEAD) * (float)num_packets_nodeed) * (float)(USEC_PER_SEC/MAIN_THREAD_SLEEP_USEC);
 	bandwidth /= 1000.0;
 
 	average_bandwidth[average_bandwidth_index] = bandwidth;
@@ -1220,14 +1220,14 @@ void handle_logging(void)
 		g_logging_data.logging_index_valid[g_logging_data.logging_index] = 0;
 		g_logging_data.num_cert_requests[g_logging_data.logging_index] = 0;
 		g_logging_data.num_id_cache_packets[g_logging_data.logging_index] = 0;
-		g_logging_data.num_relay_packets[g_logging_data.logging_index] = 0;
-		g_logging_data.num_non_relay_packets[g_logging_data.logging_index] = 0;
+		g_logging_data.num_node_packets[g_logging_data.logging_index] = 0;
+		g_logging_data.num_non_node_packets[g_logging_data.logging_index] = 0;
 		g_logging_data.percentage_of_keystore_used[g_logging_data.logging_index] = 0;
 		g_logging_data.num_key_get_failures[g_logging_data.logging_index] = 0;
 		g_logging_data.total_num_of_id_cache_threads_created[g_logging_data.logging_index] = 0;
-		g_logging_data.total_num_of_relay_threads_created[g_logging_data.logging_index] = 0;
+		g_logging_data.total_num_of_node_threads_created[g_logging_data.logging_index] = 0;
 		g_logging_data.total_num_of_id_cache_threads_destroyed[g_logging_data.logging_index] = 0;
-		g_logging_data.total_num_of_relay_threads_destroyed[g_logging_data.logging_index] = 0;
+		g_logging_data.total_num_of_node_threads_destroyed[g_logging_data.logging_index] = 0;
 		sem_post(&logging_sem);
 	}
 }
@@ -1255,9 +1255,9 @@ void log_data_to_file(int dummy)
 	while(curr_log_index != g_logging_data.logging_index) {
 		if(g_logging_data.logging_index_valid[curr_log_index]) {
 			fprintf(fp, "%lu, %lu, %lu, %lu, %f, %lu, %lu, %lu, %lu, %lu\n", g_logging_data.num_cert_requests[curr_log_index], g_logging_data.num_id_cache_packets[curr_log_index], 
-						g_logging_data.num_relay_packets[curr_log_index], g_logging_data.num_non_relay_packets[curr_log_index], g_logging_data.percentage_of_keystore_used[curr_log_index], 
+						g_logging_data.num_node_packets[curr_log_index], g_logging_data.num_non_node_packets[curr_log_index], g_logging_data.percentage_of_keystore_used[curr_log_index], 
 						g_logging_data.num_key_get_failures[curr_log_index], g_logging_data.total_num_of_id_cache_threads_created[curr_log_index], g_logging_data.total_num_of_id_cache_threads_destroyed[curr_log_index],
-								g_logging_data.total_num_of_relay_threads_created[curr_log_index], g_logging_data.total_num_of_relay_threads_destroyed[curr_log_index]);
+								g_logging_data.total_num_of_node_threads_created[curr_log_index], g_logging_data.total_num_of_node_threads_destroyed[curr_log_index]);
 		}
 		curr_log_index++;
 		if(curr_log_index >= LOGGING_DATA_LEN) {
