@@ -1,0 +1,9 @@
+Client/.relay_certs/
+Client/client
+Node/node
+Shared/cryptography.o
+Shared/key_storage.o
+Shared/networking.o
+Shared/packet_definition.o
+Shared/utils.o
+Testing/.relay_certs/
