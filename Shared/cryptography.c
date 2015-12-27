@@ -24,7 +24,7 @@ int load_public_key_into_buffer(const char *thread_id, char **rsa_public_out /* 
 		return -1;
 	}
 
-	fp_pub_key = fopen(RELAY_RSA_PUBLIC_KEY_FILE, "r");
+	fp_pub_key = fopen(NODE_RSA_PUBLIC_KEY_FILE, "r");
 	if(fp_pub_key == NULL) {
 		#ifdef ENABLE_LOGGING
 			fprintf(stdout, "%s Failed to open public RSA key file\n", thread_id);
@@ -59,25 +59,25 @@ int load_public_key_into_buffer(const char *thread_id, char **rsa_public_out /* 
 	return 0;
 }
 
-int load_rsa_key_pair(const char *relay_id, RSA **rsa_out /* out */)
+int load_rsa_key_pair(const char *node_id, RSA **rsa_out /* out */)
 {
 	FILE *fp_pub_key, *fp_priv_key;
 	int ret;
 
-	if((rsa_out == NULL) || (relay_id == NULL)) {
+	if((rsa_out == NULL) || (node_id == NULL)) {
 		return -1;
 	}
 
 	init_cryptography_env();
 
-	fp_pub_key = fopen(RELAY_RSA_PUBLIC_KEY_FILE, "r");
-	fp_priv_key = fopen(RELAY_RSA_PRIVATE_KEY_FILE, "r");
+	fp_pub_key = fopen(NODE_RSA_PUBLIC_KEY_FILE, "r");
+	fp_priv_key = fopen(NODE_RSA_PRIVATE_KEY_FILE, "r");
 	if((fp_pub_key == NULL) || (fp_priv_key == NULL)) {
 		#ifdef ENABLE_LOGGING
 			fprintf(stdout, "[MAIN THREAD] Failed to read RSA key file, generating key pair instead\n");
 		#endif
 
-		ret = generate_rsa_key_pair(relay_id, rsa_out);
+		ret = generate_rsa_key_pair(node_id, rsa_out);
 		if(ret < 0) {
 			return -1;
 		}
@@ -109,10 +109,10 @@ int save_key_pair_to_file(RSA *rsa_key_pair)
 
 	init_cryptography_env();
 
-	fp_pub_key = fopen(RELAY_RSA_PUBLIC_KEY_FILE, "w");
+	fp_pub_key = fopen(NODE_RSA_PUBLIC_KEY_FILE, "w");
 	if(fp_pub_key == NULL) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to open public key file %s\n", RELAY_RSA_PUBLIC_KEY_FILE);
+			fprintf(stdout, "[MAIN THREAD] Failed to open public key file %s\n", NODE_RSA_PUBLIC_KEY_FILE);
 		#endif
 
 		return -1;
@@ -120,10 +120,10 @@ int save_key_pair_to_file(RSA *rsa_key_pair)
 	PEM_write_RSAPublicKey(fp_pub_key, rsa_key_pair);
 	fclose(fp_pub_key);
 
-	fp_priv_key = fopen(RELAY_RSA_PRIVATE_KEY_FILE, "w");
+	fp_priv_key = fopen(NODE_RSA_PRIVATE_KEY_FILE, "w");
 	if(fp_priv_key == NULL) {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "[MAIN THREAD] Failed to open private key file %s\n", RELAY_RSA_PRIVATE_KEY_FILE);
+			fprintf(stdout, "[MAIN THREAD] Failed to open private key file %s\n", NODE_RSA_PRIVATE_KEY_FILE);
 		#endif
 
 		return -1;
@@ -248,19 +248,19 @@ int cb(char *buf, int size, int rwflag, void *u)
 	return password_size;
 }
 
-int generate_rsa_key_pair(const char *relay_id, RSA **rsa_out /* out */)
+int generate_rsa_key_pair(const char *node_id, RSA **rsa_out /* out */)
 {
 	BIGNUM *e;
 	int ret;
 
-	if((relay_id == NULL) || (rsa_out == NULL)) {
+	if((node_id == NULL) || (rsa_out == NULL)) {
 		return -1;
 	}
 
 	init_cryptography_env();
 
 	*rsa_out = RSA_new();
-	RAND_seed((const void *)relay_id, strlen(relay_id));
+	RAND_seed((const void *)node_id, strlen(node_id));
 	ret = RAND_status();
 	if(ret != 1) {
 		#ifdef ENABLE_LOGGING

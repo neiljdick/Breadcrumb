@@ -21,7 +21,7 @@ SHAREDOBJECTS = $(patsubst $(SHAREDDIR)/%.c, $(SHAREDDIR)/%.o, $(SHAREDSOURCES))
 
 SOURCES = $(wildcard *.c)
 
-EXECUTABLE = relay
+EXECUTABLE = node 
 
 ################ COMPILATION ####################
 
