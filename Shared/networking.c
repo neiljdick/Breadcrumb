@@ -210,7 +210,12 @@ int add_port_mapping(char *thread_id, unsigned int port, char *protocol)
 		return -1;
 	}
 
+#if MINIUPNPC_API_VERSION == 10
+	ret = UPNP_GetSpecificPortMappingEntry(urls.controlURL, data.first.servicetype, port_buf, protocol, NULL, intClient, intPort, NULL, NULL, duration);
+#else
 	ret = UPNP_GetSpecificPortMappingEntry(urls.controlURL, data.first.servicetype, port_buf, protocol, intClient, intPort, NULL, NULL, duration);
+#endif
+
 	if(ret != UPNPCOMMAND_SUCCESS) {
 		#ifdef ENABLE_LOGGING
 			fprintf(stdout, "%s Failed to get specific port mapping entry, error = %s\n", thread_id, strupnperror(ret));
@@ -244,7 +249,11 @@ int get_is_port_mapped(char *thread_id, unsigned int port, char *protocol, unsig
 	}
 	sprintf(port_buf, "%u", port);
 
+#if MINIUPNPC_API_VERSION == 10
+	ret = UPNP_GetSpecificPortMappingEntry(urls.controlURL, data.first.servicetype, port_buf, protocol, NULL, intClient, intPort, NULL, NULL, duration);
+#else
 	ret = UPNP_GetSpecificPortMappingEntry(urls.controlURL, data.first.servicetype, port_buf, protocol, intClient, intPort, NULL, NULL, duration);
+#endif
 	if(ret != UPNPCOMMAND_SUCCESS) {
 		#ifdef ENABLE_LOGGING
 			fprintf(stdout, "%s Found port %u unmapped\n", thread_id, port);
