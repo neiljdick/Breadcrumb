@@ -55,24 +55,25 @@ The manner in which message transactions to occur will be such that:
 		\end{itemize}
 	\item \texttt{Clone Breadcrumb Repository}
 		\begin{enumerate}
-			\item git clone https://github.com/nyquist-prompt/breadcrumb
+			\item git clone https://github.com/chaywood7/Breadcrumb
 		\end{enumerate}
-	\item \texttt{Building Client}
+	\item \texttt{Client build}
 		\begin{enumerate}
-			\item cd breadcrumb/client/
+			\item cd Breadcrumb/Client/
 			\item make
 		\end{enumerate}
-	\item \texttt{Building Node}
+	\item \texttt{Node build}
 		\begin{enumerate}
-			\item cd breadcrumb/node/
+			\item cd Breadcrumb/Node/
 			\item make
 		\end{enumerate}
 \end{enumerate}
 
 \subsection{Running a Client}
 \subsubsection{Compilation Switches}
-The client compilation switches are located at the beginning of client.c and function as follows.
+The client compilation switches are located at the beginning of Client/client.c (some are also present in Shared/*.c and control the logging within their respective modules) and function as follows.
 \begin{itemize}
+	\item \texttt{TEST\_MODE} - Listen on ETH interface and connect to hard coded nodes specified in function 'setup\_test\_mode\_conversation'
 	\item \texttt{ENABLE\_LOGGING} - Enable general logging
 	\item \texttt{ENABLE\_TRANSMIT\_RECEIVE\_LOGGING} - Enable specific logging of transmit and receive events
 	\item \texttt{ENABLE\_KEY\_HISTORY\_LOGGING} - Log all ephemeral breadcrumb keys
@@ -84,14 +85,17 @@ The client compilation switches are located at the beginning of client.c and fun
 	\item \texttt{ENABLE\_UID\_GENERATION\_LOGGING} - Log all generated ephemeral breadcrumb uids (User IDs)
 	\item \texttt{LOG\_TO\_FILE\_INSTEAD\_OF\_STDOUT} - Redirect all logging to file (client\_$<$client name$>$.log)
 	\item \texttt{LAN\_NETWORKING\_MODE} - Use LAN ip instead of WAN ip when NOT in test mode
-	\item \texttt{TEST\_MODE} - Listen on ETH interface and connect to hard coded relays specified in function 'setup\_test\_mode\_conversation'
-	\item \texttt{TEST\_MODE\_CLIENT\_1} - Define user as CLIENT 1 when in test mode, this hardwires the entry node
-	\item \texttt{TEST\_RR\_PACKET} - Force send a 'return route' type packet
+	\item \texttt{TEST\_RR\_PACKET} - Enable command (see below) that force sends a 'return route' type packet
 	\item \texttt{TEST\_UID\_CLASH} - Generate UIDs within a small range in order to test potential uid clashes
 	\item \texttt{USING\_TEST\_HARNESS} - Client starts immediately (as opposed to waiting for '/connect' command)
 \end{itemize}
 \subsubsection{Starting a Client}
-The start a client enter: ./client USER\_ID PORT
+The start a client enter: ./client USER\_ID PORT [CLIENT ONE \{Y/N\}]. The command line arguments are defined as follows:
+\begin{itemize}
+	\item \texttt{USER\_ID} - An identifier to connect to other clients (only available in test mode).
+	\item \texttt{PORT} - Port number used for outgoing connections which carry message packets. Must be greater than 16384.
+	\item \texttt{CLIENT ONE \{Y/N\}} - Optional argument only valid when the client is compiled in test mode. This switch (set by 'y' or 'Y', unset if not present or anything else) controls the entry node of the client and other conversation participant (see function 'setup\_test\_mode\_conversation').
+\end{itemize}
 \subsubsection{Client Commands}
 \begin{itemize}
 	\item \texttt{/connect USER\_ID} - Initiate a chat with client with username USER\_ID
@@ -99,31 +103,36 @@ The start a client enter: ./client USER\_ID PORT
 	\item \texttt{/exit} - Exit Breadcrumb
 	\item \texttt{/leave} - Leave current conversation
 	\item \texttt{/help} - Display command help
-	\item \texttt{/testrr} - Force sending of a 'return route' type packet
+	\item \texttt{/testrr} - Force sending of a 'return route' type packet (only available if compiled with 'TEST\_RR\_PACKET' \#define)
 \end{itemize}
 \subsubsection{Test Mode}
 Currently two clients may successfully communicate via the Breadcrumb infrastructure provided:
 \begin{enumerate}
 	\item Both clients have 'TEST\_MODE' enabled
-	\item Only one client has 'TEST\_MODE\_CLIENT\_1' enabled
+	\item Only one client is run with 'Y' or 'y' for the command line switch [CLIENT ONE \{Y/N\}]
 	\item Clients are connected to an ethernet switch
 	\item Nodes, as defined in 'setup\_test\_mode\_conversation', are connected to the ethernet switch and executing
-	\item Clients issue the '/connect' command, correctly specifying the other clients USER\_ID
+	\item Clients issue the '/connect' command, correctly specifying the other clients 'USER\_ID'
 \end{enumerate}
 \subsection{Running a Node}
 \subsubsection{Compilation Switches}
 \begin{itemize}
 	\item \texttt{ENABLE\_LOGGING} - Enable general logging
-	\item \texttt{ENABLE\_LOG\_ON\_EXIT} - Log all relay data to file (relay\_log.csv) upon exit 
+	\item \texttt{ENABLE\_LOG\_ON\_EXIT} - Log all node data to file (node\_log.csv) upon exit 
 	\item \texttt{ENABLE\_THREAD\_LOGGING} - Log thread creation\/destruction events
 	\item \texttt{ENABLE\_PACKET\_LOGGING} - Log all packet data
 	\item \texttt{ENABLE\_UID\_LOGGING} - Log all received uid (user ID) data
-	\item \texttt{LOG\_TO\_FILE\_INSTEAD\_OF\_STDOUT} - Redirect all logging to file ($<$relay name$>$.log)
+	\item \texttt{LOG\_TO\_FILE\_INSTEAD\_OF\_STDOUT} - Redirect all logging to file ($<$node name$>$.log)
 	\item \texttt{SOFT\_RESET\_KEY\_STORE} - Upon startup do NOT regenerate key store
 	\item \texttt{ENABLE\_BANDWIDTH\_REPORTING\_UI} - Client starts immediately (as opposed to waiting for '/connect' command)
 \end{itemize}
 \subsubsection{Starting a Node}
-The start a node enter: ./node NODE\_ID PORT [LOGGING INTERVAL]
+The start a node enter: ./node NODE\_ID PORT [LOGGING INTERVAL]. The command line arguments are defined as such:
+\begin{itemize}
+	\item \texttt{NODE\_ID} - Used by clients as part of the route definitions (see section 5.3 'Packet Types').
+	\item \texttt{PORT} - The port number on which the Node listens for incoming connections carrying message packets. Must be greater than 16384. 
+	\item \texttt{LOGGING INTERVAL} - An integer which sets the interval between metadata logging events as defined by the 'logging\_interval' enum present in 'node.h'.
+\end{itemize}
 \subsubsection{Important}
 When starting for the first time, a Node will create a keystore, which (depending upon the amount of free harddrive space) can be quite large. Thus it 
 is advised to only start a Node on the intended machine - don't start one on your local machine 'just for fun'.
@@ -136,22 +145,22 @@ A Client is a user who connects and performs message transactions with other use
 Clients are realized by executing the Breadcrumb client application on a users local machine (PC or mobile device) which is connected to the Internet.
 
 \subsection{Node}
-A Node hosts 'breadcrumbs' (UID + Ephemeral key) as well as user messages. Nodes use breadcrumbs (which are implanted by clients) in order to perform packet (onion-style) routing. User
+A Node hosts 'breadcrumbs' (UID + Ephemeral key) as well as user messages. Nodes use breadcrumbs (which are implanted by clients) in order to perform packet (onion-style) routing \cite{OnionRouting}. User
 messages are stored on the Node until it receives a matching 'return route' packet, which allows the Node to route the message to the intended recipient 
-(see section 'Protocol' - 'Packet Routing'). Although Nodes perform only those two functions, with respect to a user conversation (which must use a finite set of Nodes) they
+(see section 'Protocol' - 'Packet Routing'). Although Nodes ultimately perform only two functions, with respect to a user conversation (which uses a finite set of Nodes), they
 perform different tasks:
 \begin{itemize}
 	\item \texttt{Entry Node} - The only Node by which a client directly exchanges packets. All packets destined for other Nodes are onion-routed via this Node.
 The Entry Node must be unique for all participants of a conversation.
 	\item \texttt{Server Node} - A Node common to all conversation participants which is used to host user messages.
-	\item \texttt{Relay Node} - A Node which may be common amongst participants and only used to relay packets destined for other Nodes.
+	\item \texttt{Relay Node} - A Node which may be common amongst participants and only used to route packets destined for other Nodes.
 \end{itemize}
 Nodes are realized by untrusted third parties, primarily hosted on low-power/cost mini PCs (e.g. Raspberry Pi), which are connected to the Internet. 
 Third parties who run Nodes are re-imbursed for their bandwidth expenditure (See 'Spider' and 'Economy' sections).
 
 \subsection{Directory}
-A Directory allows users to create a Breadcrumb IM account and provides users who wish to chat with a 'Chat Cookie'. It also connects to Nodes to enable the user chat (by enabling 
-the storage of messages under that Conversation ID defined by that 'Chat Cookie'). The 'Chat Cookie' defines which Nodes are used by a particular user conversation (e.g. Entry Node, Server Node and Relay Nodes) and are
+A Directory allows users to create a Breadcrumb IM account and provides users who wish to chat with a 'Chat Cookie'. It also connects to the Server Node to enable the user chat (by enabling 
+the storage of messages under that Conversation ID, as defined within the 'Chat Cookie'). The 'Chat Cookie' defines which Nodes are used by a particular user conversation (e.g. Entry Node, Server Node and Relay Nodes) and are
 selected based on the current amount of clients using a particular Node with respect to that Nodes maximum capacity (which varies depending upon its specific hardware). Thus
 Directories ensure that the total traffic passing amongst the Node Network does not exceeded its capability and also that it is evenly spread.
 Directories are realized by trusted third parties.
@@ -164,8 +173,8 @@ is occuring.
 \newpage
 
 \section{Networking}
-\subsection{Figures}
-The figures used in the following section are described as follows:
+\subsection{Definition of Figures}
+The figures used in the following section are defined as follows:
 
 \begin{figure}[h]
 \centering
@@ -189,7 +198,7 @@ The figures used in the following section are described as follows:
 \subsection{Client Registration}
 Clients register with a single Directory (Figure 4), encrypting the transfer via HTTPS as well as the Directories 2048-bit RSA key (which is packaged as part of the client application).
 The registration request is routed via TOR to ensure that the Directory cannot equate a request with an IP address. The Directory then accepts or rejects the registration, 
-depending upon the existence of a client ID clash. Client ID and password is hashed (SHA-2) prior to transfer. If a registration is approved it is synchronized amongst the other 
+depending upon the existence of a client ID clash. Client IDs and passwords are hashed (SHA-2) prior to transfer. If a registration is approved it is synchronized amongst the other 
 Directories (Figure 5).
 \begin{figure}[h]
 \centering
@@ -220,7 +229,7 @@ and the older cookie is returned to the Client that made the request. The Direct
 \subsection{Routing}
 In order to route packets via the Node Network, a Client must first implant 'breadcrumbs' (see section 'Protocol' - 'Breadcrumb'). As per the protocol, Clients may only
 inject packets into the Node Network via the Entry Node; implanting breadcrumbs is no exception. If a Client wishes to implant breadcrumbs with a non-Entry Node, it 
-must onion route the implant packet via the Entry node as per Figure 7. In order to mask the metadata from an external observer the implant of breadcrumbs must be performed 
+must onion route the implant packet via the Entry node as per Figure 8. In order to mask the metadata from an external observer the implant of breadcrumbs must be performed 
 via an encrypted channel. In order to maximize performance, a Client uses DH Eliptical Curve to encrypt the breadcrumb implant packet. Once an initial set of breadcrumbs is 
 implanted, subsequent packets that retrieve that breadcrumb will leave new breadcrumbs in their wake. Thus a breadcrumb is completely ephemeral - after it is retrieved it is 
 discarded by the Node and replaced with the breadcrumb that is defined in the packet that triggered its retrieval.
@@ -244,7 +253,7 @@ discarded by the Node and replaced with the breadcrumb that is defined in the pa
 \subsection{Sending Messages}
 A client transmits a message by sending a Message Packet. A Message Packet consists of text that is to be transferred to the receiving client wrapped 
 in an onion route made up of a random non-Entry Node as the first hop and the recieving clients' Entry Node as the second hop. The conversation ID and 
-hash of the Node IDs that make up the route to the receiving client is appended to the packet. This allows the the Server Node to match the message packet 
+hash of the Node IDs that make up the route to the receiving client is appended to the packet. This allows the Server Node to match the message packet 
 to a particular conversation and pair it with a Return Route Packet (see below) which is provided by the receiving client. This is then wrapped in an onion 
 route that consists of the clients Entry Node, a random non-Entry Node and finally the Server Node and transmitted (Figure 9).
 \begin{figure}[h]
@@ -254,13 +263,11 @@ route that consists of the clients Entry Node, a random non-Entry Node and final
 \end{figure}
 
 \subsection{Receiving Messages}
-A return route packet defines an onion route that is capable of being paired to a message packet and the entirety is transmitted back to the client that provided it.
-A client that wishes to receive a message generates an onion route that consists of a random non-Entry Node as the first hop and its Entry Node as the second. The
-Node IDs of this route are hashed and appended to allow the Server Node to pair it with a message packet. This is then wrapped in an onion route that consists of the clients Entry Node,
+A return route packet defines an onion route that is capable of being paired to a message packet that was provided by the other conversation participant. Subsequent to pairing, a Node transmits the entirety, which eventually (via the onion route defined) is routed back to the client that provided the return route packet. A client that wishes to receive a message generates an onion route that consists of a random non-Entry Node as the first hop and its Entry Node as the second. The Node IDs of this route are hashed and appended to allow the Server Node to pair it with a message packet. This is then wrapped in an onion route that consists of the clients Entry Node,
 a random non-Entry Node and finally the Server Node and transmitted (Figure 10).
 \begin{figure}[h]
 	\centering
-  	\includegraphics[width=6cm,height=6cm,keepaspectratio]{img/ReturnRoutePacket.png}
+  	\includegraphics[width=5cm,height=5cm,keepaspectratio]{img/ReturnRoutePacket.png}
 	\caption{Routing a Return Route Packet to the Server Node}
 \end{figure}
 
@@ -273,7 +280,7 @@ of an external observer) and are also used by the Client to test the Node Networ
 based on the route it defined and whether or not it received a dummy packet.
 \begin{figure}[h]
 	\centering
-  	\includegraphics[width=6cm,height=6cm,keepaspectratio]{img/DummyPacket.png}
+  	\includegraphics[width=5cm,height=5cm,keepaspectratio]{img/DummyPacket.png}
 	\caption{Routing a non-Return Route style Dummy Packet}
 \end{figure}
 
@@ -336,9 +343,9 @@ There are four packet types, which are described in the following sections. The 
 The fields of the packet metadata are as follows:
 \begin{itemize}
 	\item \texttt{type} - Enumeration defining the packet type.
-	\item \texttt{onion\_r1} - If type is 'Dummy Packet /w Return Route' then this is the port for the transmitted packet. If type is 'Message Packet' then this is the XOR of the relay IDs (return route) and conversation ID. If
-	type is 'Return Route' this is the XOR of the relay IDs (return route) and conversation ID of the first defined return route.
-	\item \texttt{onion\_r2} - If type is 'Return Route' this is the XOR of the relay IDs (return route) and conversation ID of the second defined return route. Otherwise it is unused (random data).
+	\item \texttt{onion\_r1} - If type is 'Dummy Packet /w Return Route' then this is the port for the transmitted packet. If type is 'Message Packet' then this is the XOR of the node IDs (return route) and conversation ID. If
+	type is 'Return Route' this is the XOR of the node IDs (return route) and conversation ID of the first defined return route.
+	\item \texttt{onion\_r2} - If type is 'Return Route' this is the XOR of the node IDs (return route) and conversation ID of the second defined return route. Otherwise it is unused (random data).
 	\item \texttt{order} - If the type is 'Message Packet' this is the conversation packet order otherwise it is unused (random data).
 	\item \texttt{client\_id} - The client ID of the packet sender unless the packet is 'Dummy Packet /w Return Route' in which it is the most significant two bytes of the IP address for the transmitted packet.
 	\item \texttt{conversation\_id} - If the type is 'Message Packet' or 'Return Route' this is the conversation ID. If the packet is 'Dummy Packet /w Return Route' in which it is the least significant two bytes of the IP address for the transmitted packet.
@@ -365,7 +372,7 @@ A message packet contains a message destined for the other conversation particip
 \newpage
 \subsubsection{Return Route Packet}
 A return route packet contains two onion routes that are capable of being paired to a message packet (transmitted by the other conversation participant) to form a packet that may be transmitted back to the client that provided the
-return route packet. The packet metadata fields, onion\_r1 and onion\_r2, are the XOR of the relay IDs (and conversation ID) that make up the onion route that is defined. The fields, 'Return Route ID 1' and 'Return Route ID 2' are made up of random data which is cached by the Client that sends the Return Route Packet. In the event that a Client receives a Message Packet, it is these fields that are used to determine which return route the packet took. This is required in order to determine which breadcrumb (key / uid) pairs are now present in the return route Nodes.\\*\\*
+return route packet. The packet metadata fields, onion\_r1 and onion\_r2, are the XOR of the node IDs (and conversation ID) that make up the onion route that is defined. The fields, 'Return Route ID 1' and 'Return Route ID 2' are made up of random data which is cached by the Client that sends the Return Route Packet. In the event that a Client receives a Message Packet, it is these fields that are used to determine which return route the packet took. This is required in order to determine which breadcrumb (key / uid) pairs are now present in the return route Nodes.\\*\\*
 \begin{figure}[h]
 	\centering
   	\includegraphics[width=8cm,height=8cm,keepaspectratio]{img/ReturnRoutePacketStructure.png}
@@ -374,17 +381,15 @@ return route packet. The packet metadata fields, onion\_r1 and onion\_r2, are th
 \newpage
 
 \section{Processes}
-\subsection{Enabling Routes}
-Directores enable routes by pushing cookie to Node (part of Chat Cookie). Nodes confirm packet was sent by Directory by checking against list of hard-coded key signatures.
-\subsection{Enabling Message Exchange}
-Directory enables message exchange by pushing cookie to Node in particular Message Slot. Nodes confirm packet was sent by Directory by checking against list of hard-coded key signatures.
+\subsection{Enabling Routes and Message Exchange}
+Directores enable breadcrumbs and message packets by registering a cookie (which is provided to the conversation participants as part of the 'Chat Cookie') to the respective conversation Nodes. Nodes confirm the registration packet by checking its signature against a list of hard-coded key signatures.
 \subsection{Routing Packets}
 As described in section 'Packet Structure' after receiving a packet the Node decrypts the 'Route Onion' and 'Payload Onion' sections. After decryption, the 'Next IP' address of the 'Route Onion' section is compared with '0.0.0.0',
 if equal it is a 'Non-routing Packet', otherwise it is a 'Routing' packet. The packet is thus reconfigured as Figure 16, the filler being random data that is appended to preserve the constant packet size and then sent to the 'Next IP'.
 \begin{figure}[h]
 	\centering
   	\includegraphics[width=8cm,height=8cm,keepaspectratio]{img/BasicPacketStructurePostRoute.png}
-	\caption{Post Routing Packet}
+	\caption{Packet after a single routing stage}
 \end{figure}
 \newpage
 \subsection{Non-routing Packets}
@@ -397,7 +402,7 @@ The manner in which non-routing packets are handled is dependent upon the packet
 \end{itemize}
 
 \subsection{Forward Secrecy}
-Before message transaction occurs, clients will perform a DH key exchange and derive a session key. This session key will be used (as well as the Chat Cookie session key) as the root key of an Axolotl ratchet. \cite{OwsRatchet,AxoRatchetLib} Clients will identify DH key exchange packets by the return route that they occur upon - the 'Chat Cookie' will define a specific, unique return route path that will be used by clients to ONLY transmit DH packets.
+Before message transaction occurs, clients will perform a DH key exchange and derive a session key. This session key will be used (as well as the Chat Cookie session key) as the root key of an Axolotl ratchet \cite{OwsRatchet,AxoRatchetLib}. Clients will identify DH key exchange packets by the return route that they occur upon - the 'Chat Cookie' will define a specific, unique return route path that will be used by clients to ONLY transmit DH packets.
 
 \newpage
 
@@ -443,6 +448,7 @@ Potential improvements include:
 \newpage
 
 \begin{thebibliography}{9}
+	\bibitem{OnionRouting} Wikipedia, \emph{Onion Routing}. https://en.wikipedia.org/wiki/Onion\_routing, 28 Dec 2015.
 	\bibitem{OwsRatchet} Open Whisper Systems, \emph{Advanced cryptographic ratcheting}. https://whispersystems.org/blog/advanced-ratcheting/, 26 Nov 2013.
 	\bibitem{AxoRatchetLib} Axolotl, \emph{ Axolotl C Library}. https://github.com/WhisperSystems/libaxolotl-c, 23 Dec 2015.
 
