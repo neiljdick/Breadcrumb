@@ -1,6 +1,6 @@
 #include "key_storage.h"
 
-#define ENABLE_LOGGING
+//#define ENABLE_LOGGING
 //#define ENABLE_INCREMENT_TASK_LOGGING
 //#define LOG_TO_FILE_INSTEAD_OF_STDOUT
 //#define DEBUG_MODE
@@ -696,7 +696,7 @@ int get_free_ram_in_mb(char *thread_id, unsigned long *ram_free_mb)
 	char line[256], *c_ptr;
 	const char *memfree_str = "memfree";
 	char free_bytes_buf[32], qualifier_buf[3];
-	int found_free_bytes, prev_char_was_digit, found_qualifier;
+	int found_free_bytes, prev_char_was_digit;
 	float multiplier;
 
 	if(ram_free_mb == NULL) {
@@ -727,7 +727,6 @@ int get_free_ram_in_mb(char *thread_id, unsigned long *ram_free_mb)
 	memset(free_bytes_buf, 0, sizeof(free_bytes_buf));
 	memset(qualifier_buf, 0, sizeof(qualifier_buf));
 	found_free_bytes = prev_char_was_digit = 0;
-	found_qualifier = 0;
 	j = k = 0;
 	for(i = 0; i < 256; i++) {
 		if(line[i] == '\0')
@@ -755,7 +754,6 @@ int get_free_ram_in_mb(char *thread_id, unsigned long *ram_free_mb)
 						return -1;
 					}
 					qualifier_buf[k++] = line[i];
-					found_qualifier = 1;
 				}
 			}
 		}
@@ -789,8 +787,7 @@ int get_free_ram_in_mb(char *thread_id, unsigned long *ram_free_mb)
 		return 0;
 	} else {
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "%s Failed to parse memory statistics, found_free_bytes: %d, found_qualifier: %d\n", thread_id, 
-						found_free_bytes, found_qualifier);
+			fprintf(stdout, "%s Failed to parse memory statistics, found_free_bytes: %d\n", thread_id, found_free_bytes);
 		#endif
 
 		fclose(fp);

@@ -1,4 +1,4 @@
-Client/.relay_certs/
+Client/.node_certs/
 Client/client
 Node/node
 Shared/cryptography.o
