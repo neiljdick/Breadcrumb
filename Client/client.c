@@ -1,5 +1,7 @@
 #include "client.h"
 
+#define TEST_MODE
+
 //#define ENABLE_LOGGING
 //#define ENABLE_TRANSMIT_RECEIVE_LOGGING
 //#define ENABLE_KEY_HISTORY_LOGGING
@@ -11,12 +13,13 @@
 //#define ENABLE_UID_GENERATION_LOGGING
 //#define LOG_TO_FILE_INSTEAD_OF_STDOUT
 //#define LAN_NETWORKING_MODE
-#define TEST_MODE
-#define TEST_MODE_CLIENT_1
 //#define TEST_RR_PACKET
 //#define TEST_UID_CLASH
 //#define USING_TEST_HARNESS
 
+#ifdef TEST_MODE
+	int g_we_are_client_one;
+#endif
 #ifdef TEST_UID_CLASH
 	int g_uid_clash_offset;
 #endif
@@ -155,6 +158,12 @@ int main(int argc, char const *argv[])
 	int ret;
 	pthread_t send_packet_thread, receive_packet_thread;
 
+	#ifdef LOG_TO_FILE_INSTEAD_OF_STDOUT
+		char buf_lf[USER_NAME_MAX_LENGTH + 5];
+		sprintf(buf_lf, "client_%s.log", argv[1]);
+		freopen(buf_lf, "w", stdout);
+	#endif
+
 	ret = init_globals(argc, argv);
 	if(ret < 0) {
 		return -2; // TODO error #defines
@@ -183,27 +192,15 @@ int main(int argc, char const *argv[])
 
 static int init_globals(int argc, char const *argv[])
 {
-	if(argc != 3) {
-		fprintf(stdout, "Usage: ./%s USER_ID PORT\n", program_name);
+	if(argc < 3) {
+		#ifdef TEST_MODE
+			fprintf(stdout, "Usage: ./%s USER_ID PORT [CLIENT ONE {Y/N}]\n", program_name);
+		#else
+			fprintf(stdout, "Usage: ./%s USER_ID PORT\n", program_name);
+		#endif
 
 		exit(-1);
 	}
-
-	#ifdef LOG_TO_FILE_INSTEAD_OF_STDOUT
-		char buf_lf[USER_NAME_MAX_LENGTH + 5];
-		sprintf(buf_lf, "client_%s.log", argv[1]);
-		freopen(buf_lf, "w", stdout);
-	#endif
-
-	sem_init(&th_comm_sem, 0, 1);
-	sem_init(&g_sp_node_sem, 0, 1);
-	sem_init(&im_comm_sem, 0, 1);
-	sem_init(&om_comm_sem, 0, 1);
-
-	g_sp_node = NULL;
-	g_current_conversation_index = 0;
-	memset(&im_comm, 0, sizeof(im_comm));
-	memset(&om_comm, 0, sizeof(om_comm));
 
 	if(strlen(argv[1]) > USER_NAME_MAX_LENGTH) {
 		fprintf(stdout, "%s Username must be less than %u characters\n", feedback_tag, USER_NAME_MAX_LENGTH);
@@ -226,6 +223,16 @@ static int init_globals(int argc, char const *argv[])
 
 		exit(-1);
 	}
+
+	sem_init(&th_comm_sem, 0, 1);
+	sem_init(&g_sp_node_sem, 0, 1);
+	sem_init(&im_comm_sem, 0, 1);
+	sem_init(&om_comm_sem, 0, 1);
+
+	g_sp_node = NULL;
+	g_current_conversation_index = 0;
+	memset(&im_comm, 0, sizeof(im_comm));
+	memset(&om_comm, 0, sizeof(om_comm));
 	memset(g_conversations, 0, sizeof(g_conversations));
 	memset(g_client_ip_addr, 0, sizeof(g_client_ip_addr));
 	memset(&g_rhistory, 0, sizeof(g_rhistory));
@@ -233,8 +240,16 @@ static int init_globals(int argc, char const *argv[])
 	g_queue_packet_for_transmission = 0;
 	g_close_current_chat = 0;
 	g_enable_send_packet_handler = 0;
-
 	memset(&g_bandwidth_data, 0, sizeof(bandwidth_data));
+
+	#ifdef TEST_MODE
+		g_we_are_client_one = 0;
+		if(argc >= 4) {
+			if((argv[3][0] == 'y') || (argv[3][0] == 'Y')) {
+				g_we_are_client_one = 1;
+			}
+		}
+	#endif
 	#ifdef ENABLE_BANDWIDTH_LOGGING
 		FILE *fp = fopen(bandwidth_log_name, "w");
 		if(fp != NULL)
@@ -251,7 +266,6 @@ static int init_globals(int argc, char const *argv[])
 			fprintf(stdout, "Failed to open log file for UID logging\n");
 		}
 	#endif
-
 	#ifdef TEST_UID_CLASH
 		g_uid_clash_offset = get_random_number(0) % 10000;
 	#endif
@@ -1258,13 +1272,13 @@ static int setup_test_mode_conversation(conversation_info *ci_out)
 		return -1;
 	}
 
-	#ifdef TEST_MODE_CLIENT_1
+	if(g_we_are_client_one) {
 		ci_out->index_of_entry_node = 0;
 		ci_out->index_of_friend_entry_node = 1;
-	#else
+	} else {
 		ci_out->index_of_entry_node = 1;
 		ci_out->index_of_friend_entry_node = 0;
-	#endif
+	}
 
 	ci_out->index_of_server_node = 3;
 	strcpy(ci_out->ri_pool[0].node_ip, "10.10.6.200");

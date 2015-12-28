@@ -768,11 +768,10 @@ void *handle_msg_client_thread(void *ptr)
 		g_logging_data.total_num_of_node_threads_destroyed[g_logging_data.logging_index]++;
 		num_node_packets_bandwidth_report += 1;
 		sem_post(&logging_sem);
-
 	} else {
 		next_addr.s_addr = or_data_decrypted_ptr->ord_enc.next_pkg_ip;
 		#ifdef ENABLE_LOGGING
-			fprintf(stdout, "%s Found next ip = %s, port = %u\n", thread_id_buf, inet_ntoa(next_addr), or_data_decrypted_ptr->ord_enc.next_pkg_port);
+			fprintf(stdout, "%s Received routing packet, next ip = %s, port = %u\n", thread_id_buf, inet_ntoa(next_addr), or_data_decrypted_ptr->ord_enc.next_pkg_port);
 		#endif
 
 		send_packet_to_node(packet_data, inet_ntoa(next_addr), or_data_decrypted_ptr->ord_enc.next_pkg_port);
