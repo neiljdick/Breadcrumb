@@ -45,7 +45,7 @@ const char *unknown_str 			= "UNKNOWN";
 #define NUM_USER_ID_CACHE_THREADS 		(50)
 #define USER_ID_CACHE_THREAD_MAX_AGE 	(5)
 
-#define NODE_ID_HASH_COUNT 			(3000)
+#define NODE_ID_HASH_COUNT 				(3000)
 
 #define NUM_THREAD_POOLS				(2)
 #define MSG_THREAD_POOL_INDEX			(0)
