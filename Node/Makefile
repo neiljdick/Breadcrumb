@@ -42,3 +42,11 @@ clean:
 	rm -f *.o
 	rm -f $(SHAREDDIR)/*.o
 	@echo "Cleaning complete"
+
+upload:
+	sshpass -p 'raspberry' scp *.c *.h Makefile pi@10.10.6.200:./Documents/Projects/Breadcrumb/Node/
+	sshpass -p 'raspberry' scp *.c *.h Makefile pi@10.10.6.201:./Documents/Projects/Breadcrumb/Node/
+	sshpass -p 'raspberry' scp *.c *.h Makefile pi@10.10.6.202:./Documents/Projects/Breadcrumb/Node/
+	sshpass -p 'raspberry' scp ../Shared/*.c ../Shared/*.h pi@10.10.6.200:./Documents/Projects/Breadcrumb/Shared/
+	sshpass -p 'raspberry' scp ../Shared/*.c ../Shared/*.h pi@10.10.6.201:./Documents/Projects/Breadcrumb/Shared/
+	sshpass -p 'raspberry' scp ../Shared/*.c ../Shared/*.h pi@10.10.6.202:./Documents/Projects/Breadcrumb/Shared/
