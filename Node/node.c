@@ -180,7 +180,7 @@ void init_globals(int argc, char *argv[])
 		exit(-5);
 	}
 	if(g_client_msg_port < PORT_MIN) {
-		fprintf(stdout, "[MAIN THREAD] Port number (%u) must be less than %u\n", g_client_msg_port, PORT_MIN);
+		fprintf(stdout, "[MAIN THREAD] Port number (%u) must be greater than %u\n", g_client_msg_port, PORT_MIN);
 		exit(-5);
 	}
 	g_id_cache_port = g_client_msg_port + 1;

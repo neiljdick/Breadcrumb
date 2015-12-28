@@ -36,7 +36,8 @@
 - [ ] TESTING!
 	- [ ] Overnight, multiple clients
 	- [ ] DOS attack 
-
+- [ ] Crashes
+	- [ ] Segfault in test mode if interface is up but not physically plugged in?
 
 -------------------------------------------------------- BUG TRACKING --------------------------------------------------------------------
 - Need to fix issue when pressing 'Ctrl-C' when relay is asking for relay password

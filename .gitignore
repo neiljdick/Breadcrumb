@@ -7,3 +7,6 @@ Shared/networking.o
 Shared/packet_definition.o
 Shared/utils.o
 Testing/.relay_certs/
+Meta/Design/Documentation/breadcrumb.aux
+Meta/Design/Documentation/breadcrumb.log
+Meta/Design/Documentation/breadcrumb.toc
